@@ -25,15 +25,13 @@ import com.google.enterprise.cloudsearch.sdk.CloseableIterable;
 import com.google.enterprise.cloudsearch.sdk.InvalidConfigurationException;
 import com.google.enterprise.cloudsearch.sdk.RepositoryException;
 import com.google.enterprise.cloudsearch.sdk.indexing.IndexingService.ContentFormat;
-import com.google.enterprise.cloudsearch.sdk.indexing.template.ApiOperation;
-import com.google.enterprise.cloudsearch.sdk.indexing.template.FullTraversalConnector;
-import com.google.enterprise.cloudsearch.sdk.indexing.template.Repository;
-import com.google.enterprise.cloudsearch.sdk.indexing.template.RepositoryContext;
-import com.google.enterprise.cloudsearch.sdk.indexing.template.RepositoryDoc;
+import com.google.enterprise.cloudsearch.sdk.indexing.template.*;
+
 import java.io.IOException;
 import java.util.Collections;
 import java.util.Iterator;
 import org.apache.commons.csv.CSVRecord;
+import org.apache.commons.lang.StringUtils;
 
 /**
  * {@link Repository} implementation for csv connector. {@link CSVConnector} must be used with
@@ -116,12 +114,16 @@ public class CSVRepository implements Repository {
       return transform(csvFile.iterator(), this::createRepositoryDoc);
     }
 
-    RepositoryDoc createRepositoryDoc(CSVRecord csvRecord) {
+    ApiOperation createRepositoryDoc(CSVRecord csvRecord) {
       try {
-        return new RepositoryDoc.Builder()
-            .setItem(csvFileManager.createItem(csvRecord))
-            .setContent(csvFileManager.createContent(csvRecord), ContentFormat.HTML)
-            .build();
+        RepositoryDoc repositoryDoc = new RepositoryDoc.Builder()
+                .setItem(csvFileManager.createItem(csvRecord))
+                .setContent(csvFileManager.createContent(csvRecord), ContentFormat.HTML)
+                .build();
+        //if(StringUtils.isBlank(repositoryDoc.getItem().getMetadata().getTitle())) {
+        //  return ApiOperations.deleteItem(repositoryDoc.getItem().getName());
+        //}
+        return repositoryDoc;
       } catch (IOException e) {
         throw new RuntimeException("Error creating document from CSV record.", e);
       }

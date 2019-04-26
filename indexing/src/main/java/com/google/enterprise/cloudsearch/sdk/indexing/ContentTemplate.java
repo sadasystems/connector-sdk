@@ -267,12 +267,15 @@ public class ContentTemplate {
   public String apply(Multimap<String, Object> keyValues) {
     checkNotNull(keyValues, "Key Values map cannot be null.");
     List<String> values = new ArrayList<>();
-    values.add(HTML_ESCAPER.escape(getOrDefault(keyValues, this.title, "Title")));
+    //values.add(HTML_ESCAPER.escape(getOrDefault(keyValues, this.title, "Title")));
+    values.add(getOrDefault(keyValues, this.title, "Title"));
 
     // add each field or empty if not present to preserve order, etc.
-    values.add(HTML_ESCAPER.escape(getOrDefault(keyValues, this.title, ""))); // duplicate in body
+    //values.add(HTML_ESCAPER.escape(getOrDefault(keyValues, this.title, ""))); // duplicate in body
+    values.add(getOrDefault(keyValues, this.title, ""));
     for (String field : this.allOrderedContent) {
-      values.add(HTML_ESCAPER.escape(getOrDefault(keyValues, field, "")));
+      //values.add(HTML_ESCAPER.escape(getOrDefault(keyValues, field, "")));
+      values.add(getOrDefault(keyValues, field, ""));
     }
 
     if (unmappedColumnMode == UnmappedColumnsMode.APPEND) {
@@ -287,7 +290,8 @@ public class ContentTemplate {
           .forEach(
               field -> {
                 unmappedContent.append(getDiv(field, LOW_TAG, LOW_TAG_CLOSE, includeFieldName));
-                additionalValues.add(HTML_ESCAPER.escape(getOrDefault(keyValues, field, "")));
+                //additionalValues.add(HTML_ESCAPER.escape(getOrDefault(keyValues, field, "")));
+                additionalValues.add(getOrDefault(keyValues, field, ""));
               });
       values.add(String.format(unmappedContent.toString(), additionalValues.toArray()));
     }
@@ -301,7 +305,7 @@ public class ContentTemplate {
       return defaultVal;
     }
     Collection<Object> values =
-        keyValues.get(key).stream().filter(Objects::nonNull).collect(Collectors.toList());
+        keyValues.get(key).stream().filter(Objects::nonNull).map(x -> x.toString().replace("&nbsp;", " ")).collect(Collectors.toList());
     if (values.isEmpty()) {
       return defaultVal;
     }

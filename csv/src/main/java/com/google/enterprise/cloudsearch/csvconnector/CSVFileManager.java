@@ -67,9 +67,14 @@ import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
+import org.apache.commons.lang.StringEscapeUtils;
 
 /**
  * Manager of configuration file column definitions and csv file.
@@ -268,9 +273,98 @@ class CSVFileManager {
           values.add(entry.getValue());
         }
       }
+      values = values.stream().map(x -> StringEscapeUtils.unescapeHtml(x)).collect(Collectors.toList());
+      if(entry.getKey().equals("shortQuestion")) {
+        values = values.stream().map(x -> x.replaceAll("<[^>]*>", "")).collect(Collectors.toList());
+      }
+      values = values.stream().map(x -> utf8TruncateOnWordBoundary(x, 2048, "")).collect(Collectors.toList());
       multimap.putAll(entry.getKey(), values);
     }
     return multimap;
+  }
+
+  private final static Pattern removeBeforeLastWhitespace = Pattern.compile("^(.+?)\\s+\\S+$", Pattern.DOTALL);
+  private final static Pattern endsWithWhitespace = Pattern.compile("^.+?\\s$", Pattern.DOTALL);
+  private final static Pattern startsWithWhitespace = Pattern.compile("^\\s.+?$", Pattern.DOTALL);
+  private final static Pattern RTRIM = Pattern.compile("\\s+$");
+
+  /*
+    Trim any trailing whitespace from end of string
+     */
+  public static String rtrim(String s) {
+    return RTRIM.matcher(s).replaceAll("");
+  }
+
+  public static String substringAfter(String str, String separator) {
+    if (str == null || str.length() == 0) {
+      return str;
+    }
+    if (separator == null) {
+      return "";
+    }
+    int pos = str.indexOf(separator);
+    if (pos == -1) {
+      return "";
+    }
+    return str.substring(pos + separator.length());
+  }
+
+  /**
+   * Truncate a Java string so that its UTF-8 representation will not
+   * exceed the specified number of bytes.
+   * <p>
+   * From: https://gist.github.com/lpar/1031951
+   */
+  public static String utf8Truncate(String input, int maxLength) {
+    StringBuffer result = new StringBuffer(maxLength);
+    int resultlen = 0;
+    for (int i = 0; i < input.length(); i++) {
+      char c = input.charAt(i);
+      int charlen = 0;
+      if (c <= 0x7f) {
+        charlen = 1;
+      } else if (c <= 0x7ff) {
+        charlen = 2;
+      } else if (c <= 0xd7ff) {
+        charlen = 3;
+      } else if (c <= 0xdbff) {
+        charlen = 4;
+      } else if (c <= 0xdfff) {
+        charlen = 0;
+      } else if (c <= 0xffff) {
+        charlen = 3;
+      }
+      if (resultlen + charlen > maxLength) {
+        break;
+      }
+      result.append(c);
+      resultlen += charlen;
+    }
+    return result.toString();
+  }
+
+  public static String utf8TruncateOnWordBoundary(String input, int maxLength, String trunctedSuffix) {
+    String utf8Truncated = utf8Truncate(input, maxLength);
+
+    //string was already short enough, simply return it
+    if (utf8Truncated.equals(input)) return utf8Truncated;
+
+    // find the part of the original string beyond the truncation
+    String remainder = substringAfter(input, utf8Truncated);
+
+    Matcher startsWithWhitespaceMatcher = startsWithWhitespace.matcher(remainder);
+    Matcher endsWithWhitespaceMatcher = endsWithWhitespace.matcher(utf8Truncated);
+
+    // if we truncated in the middle of a word, we need to trim off the partial last word
+    if (!endsWithWhitespaceMatcher.matches() && !startsWithWhitespaceMatcher.matches()) {
+      Matcher removeBeforeLastWhitespaceMatcher = removeBeforeLastWhitespace.matcher(utf8Truncated);
+      if (removeBeforeLastWhitespaceMatcher.matches()) {
+        utf8Truncated = removeBeforeLastWhitespaceMatcher.group(1);
+      }
+    }
+    // remove any trailing whitespace and append the truncation suffix
+    utf8Truncated = rtrim(utf8Truncated) + trunctedSuffix;
+    return utf8Truncated;
   }
 
   /**
