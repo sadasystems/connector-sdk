@@ -246,7 +246,7 @@ class CSVFileManager {
    * corresponding values for the csvRecord
    */
   public ByteArrayContent createContent(CSVRecord csvRecord) throws IOException {
-    String htmlContent = contentTemplate.apply(generateMultiMap(csvRecord));
+    String htmlContent = contentTemplate.apply(generateFullMultiMap(csvRecord));
     return ByteArrayContent.fromString("text/html", htmlContent);
   }
 
@@ -269,15 +269,44 @@ class CSVFileManager {
           .splitToList(entry.getValue());
       } else {
         String value = entry.getValue().trim();
+        value = StringEscapeUtils.unescapeHtml(value);
+        if(entry.getKey().equals("shortQuestion") || entry.getKey().equals("answerDisplay")) {
+          value = value.replaceAll("<[^>]*>", "");
+        }
+        value = utf8TruncateOnWordBoundary(value, 2048, "");
         if (!value.isEmpty()) {
-          values.add(entry.getValue());
+          values.add(value);
         }
       }
-      values = values.stream().map(x -> StringEscapeUtils.unescapeHtml(x)).collect(Collectors.toList());
-      if(entry.getKey().equals("shortQuestion")) {
-        values = values.stream().map(x -> x.replaceAll("<[^>]*>", "")).collect(Collectors.toList());
+      multimap.putAll(entry.getKey(), values);
+    }
+    return multimap;
+  }
+
+  /**
+   * Generates a multimap for each column names and corresponding values in csvRecord. Splits the
+   * multivalued field using default delimiter ','. Parses date fields based on the date time
+   * format specified by user in the configuration properties.
+   *
+   * @param csvRecord csvRecord
+   * @return a multimap for csv column names and values in csvRecord
+   */
+  @VisibleForTesting
+  Multimap<String, Object> generateFullMultiMap(CSVRecord csvRecord) {
+    Multimap<String, Object> multimap = ArrayListMultimap.create();
+    for (Map.Entry<String, String> entry : csvRecord.toMap().entrySet()) {
+      List<String> values = new ArrayList<>();
+      if (columnsToDelimiter.containsKey(entry.getKey())) {
+        values = Splitter.on(columnsToDelimiter.get(entry.getKey())).trimResults()
+                .omitEmptyStrings()
+                .splitToList(entry.getValue());
+      } else {
+        String value = entry.getValue().trim();
+        value = StringEscapeUtils.unescapeHtml(value);
+        if (!value.isEmpty()) {
+          values.add(value);
+        }
       }
-      values = values.stream().map(x -> utf8TruncateOnWordBoundary(x, 2048, "")).collect(Collectors.toList());
       multimap.putAll(entry.getKey(), values);
     }
     return multimap;
