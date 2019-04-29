@@ -425,9 +425,11 @@ public class FullTraversalConnector implements IndexingConnector, IncrementalCha
         } catch (TimeoutException e) {
           try {
             // second attempt
+            logger.log(Level.WARNING, "Future.get() timed out after 10 minutes. Making a second attempt");
             updates.get(10, TimeUnit.MINUTES);
           } catch (TimeoutException e1) {
             // give up
+            logger.log(Level.WARNING, "Second attempt of Future.get() timed out after 10 minutes");
             throw new IOException(e1);
           }
         }
