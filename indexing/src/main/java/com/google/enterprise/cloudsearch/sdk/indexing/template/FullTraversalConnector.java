@@ -45,11 +45,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -423,7 +419,18 @@ public class FullTraversalConnector implements IndexingConnector, IncrementalCha
       }
       ListenableFuture<List<List<GenericJson>>> updates = Futures.allAsList(futures);
       try {
-        updates.get();
+        try {
+          // first attempt
+          updates.get(10, TimeUnit.MINUTES);
+        } catch (TimeoutException e) {
+          try {
+            // second attempt
+            updates.get(10, TimeUnit.MINUTES);
+          } catch (TimeoutException e1) {
+            // give up
+            throw new IOException(e1);
+          }
+        }
       } catch (ExecutionException e) {
         throw new IOException(e);
       }
