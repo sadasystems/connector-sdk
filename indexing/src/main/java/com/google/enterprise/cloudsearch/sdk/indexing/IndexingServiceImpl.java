@@ -135,6 +135,7 @@ public class IndexingServiceImpl extends BaseApiService<CloudSearch> implements 
   public static final String ENABLE_API_DEBUGGING = "indexingService.enableDebugging";
   public static final String ALLOW_UNKNOWN_GSUITE_PRINCIPALS =
       "indexingService.allowUnknownGsuitePrincipals";
+  public static final String MY_NEW_FIELD = "chad";
 
   private static final OperationStats indexingServiceStats =
       StatsManager.getComponent("IndexingService");
