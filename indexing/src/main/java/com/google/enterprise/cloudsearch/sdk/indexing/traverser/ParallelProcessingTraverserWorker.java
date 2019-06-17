@@ -165,7 +165,7 @@ class ParallelProcessingTraverserWorker extends AbstractTraverserWorker implemen
                     "Processing queue entry %s timed out, limit %d %s",
                     polledItem, timeout, timeunit),
                 e);
-          } catch (ExecutionException e) {
+          } catch (Error | Exception e) {
             logger.log(
                 Level.WARNING,
                 String.format("Exception while processing queue entry %s", polledItem),
