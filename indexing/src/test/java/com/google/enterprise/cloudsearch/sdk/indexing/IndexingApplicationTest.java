@@ -27,7 +27,6 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,7 +50,6 @@ import com.google.enterprise.cloudsearch.sdk.indexing.IndexingApplication.Applic
 import com.google.enterprise.cloudsearch.sdk.indexing.StructuredData.ResetStructuredDataRule;
 import java.io.File;
 import java.io.IOException;
-import java.security.GeneralSecurityException;
 import java.util.Collections;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
@@ -215,7 +213,7 @@ public class IndexingApplicationTest {
 
   @Test
   public void startShouldFailWithStartupExceptionWhenContextBuildException() throws Exception {
-    doThrow(GeneralSecurityException.class).when(mockContextBuilder).build();
+    doThrow(RuntimeException.class).when(mockContextBuilder).build();
     IndexingApplication subject =
         new IndexingApplication.Builder(mockConnector, new String[] {})
             .setIndexingService(mockIndexingService)
@@ -249,8 +247,8 @@ public class IndexingApplicationTest {
                 .setHelper(mockHelper)
                 .build());
     validateStartError(subject, InvalidConfigurationException.class, null);
-    verify(mockIndexingService, times(1)).stopAsync();
-    verify(mockIndexingService, times(1)).awaitTerminated();
+    verify(mockIndexingService).stopAsync();
+    verify(mockIndexingService).awaitTerminated();
   }
 
   @Test
@@ -288,16 +286,16 @@ public class IndexingApplicationTest {
             mockHelper,
             mockTraverserBuilder,
             mockTraverser);
-    inOrder.verify(mockHelper, times(1)).createShutdownHookThread(any(ShutdownHook.class));
-    inOrder.verify(mockIndexingService, times(1)).startAsync();
-    inOrder.verify(mockIndexingService, times(1)).awaitRunning();
-    inOrder.verify(mockIndexingService, times(1)).getSchema();
-    inOrder.verify(mockExceptionHandler, times(1)).handleException(ex, 1);
-    inOrder.verify(mockHelper, times(1)).createSchedulerBuilderInstance();
-    inOrder.verify(mockTraverserBuilder, times(1)).setConnector(eq(mockConnector));
-    inOrder.verify(mockTraverserBuilder, times(1)).setContext(eq(mockContext));
-    inOrder.verify(mockTraverserBuilder, times(1)).setShutdownHolder(any());
-    inOrder.verify(mockTraverser, times(1)).start();
+    inOrder.verify(mockHelper).createShutdownHookThread(any(ShutdownHook.class));
+    inOrder.verify(mockIndexingService).startAsync();
+    inOrder.verify(mockIndexingService).awaitRunning();
+    inOrder.verify(mockIndexingService).getSchema();
+    inOrder.verify(mockExceptionHandler).handleException(ex, 1);
+    inOrder.verify(mockHelper).createSchedulerBuilderInstance();
+    inOrder.verify(mockTraverserBuilder).setConnector(eq(mockConnector));
+    inOrder.verify(mockTraverserBuilder).setContext(eq(mockContext));
+    inOrder.verify(mockTraverserBuilder).setShutdownHolder(any());
+    inOrder.verify(mockTraverser).start();
     inOrder.verifyNoMoreInteractions();
   }
 
@@ -310,15 +308,15 @@ public class IndexingApplicationTest {
             .build();
     subject.start();
     InOrder inOrder = inOrder(mockRuntime, mockHelper, mockTraverserBuilder, mockTraverser);
-    inOrder.verify(mockHelper, times(1)).createShutdownHookThread(any(ShutdownHook.class));
-    inOrder.verify(mockHelper, times(1)).getRuntimeInstance();
-    inOrder.verify(mockRuntime, times(1)).addShutdownHook(mockShutdownThread);
-    inOrder.verify(mockHelper, times(1)).createContextBuilderInstance();
-    inOrder.verify(mockHelper, times(1)).createSchedulerBuilderInstance();
-    inOrder.verify(mockTraverserBuilder, times(1)).setConnector(eq(mockConnector));
-    inOrder.verify(mockTraverserBuilder, times(1)).setContext(eq(mockContext));
-    inOrder.verify(mockTraverserBuilder, times(1)).setShutdownHolder(any());
-    inOrder.verify(mockTraverser, times(1)).start();
+    inOrder.verify(mockHelper).createShutdownHookThread(any(ShutdownHook.class));
+    inOrder.verify(mockHelper).getRuntimeInstance();
+    inOrder.verify(mockRuntime).addShutdownHook(mockShutdownThread);
+    inOrder.verify(mockHelper).createContextBuilderInstance();
+    inOrder.verify(mockHelper).createSchedulerBuilderInstance();
+    inOrder.verify(mockTraverserBuilder).setConnector(eq(mockConnector));
+    inOrder.verify(mockTraverserBuilder).setContext(eq(mockContext));
+    inOrder.verify(mockTraverserBuilder).setShutdownHolder(any());
+    inOrder.verify(mockTraverser).start();
     inOrder.verifyNoMoreInteractions();
   }
 
@@ -366,9 +364,9 @@ public class IndexingApplicationTest {
     subject.start();
     subject.shutdown("TestEvent");
     InOrder inOrder = inOrder(spyLogger, mockTraverser, mockConnector);
-    inOrder.verify(spyLogger, times(1)).log(eq(Level.INFO), any(), anyString());
-    inOrder.verify(mockTraverser, times(1)).isStarted();
-    inOrder.verify(mockConnector, times(1)).destroy();
+    inOrder.verify(spyLogger).log(eq(Level.INFO), any(), anyString());
+    inOrder.verify(mockTraverser).isStarted();
+    inOrder.verify(mockConnector).destroy();
   }
 
   @Test
@@ -382,10 +380,10 @@ public class IndexingApplicationTest {
     subject.start();
     subject.shutdown("TestEvent");
     InOrder inOrder = inOrder(spyLogger, mockTraverser, mockConnector);
-    inOrder.verify(spyLogger, times(1)).log(eq(Level.INFO), any(), anyString());
-    inOrder.verify(mockTraverser, times(1)).isStarted();
-    inOrder.verify(mockTraverser, times(1)).stop();
-    inOrder.verify(mockConnector, times(1)).destroy();
+    inOrder.verify(spyLogger).log(eq(Level.INFO), any(), anyString());
+    inOrder.verify(mockTraverser).isStarted();
+    inOrder.verify(mockTraverser).stop();
+    inOrder.verify(mockConnector).destroy();
   }
 
   @Test

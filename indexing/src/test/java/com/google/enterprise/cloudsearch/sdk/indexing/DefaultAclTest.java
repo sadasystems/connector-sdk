@@ -18,11 +18,11 @@ package com.google.enterprise.cloudsearch.sdk.indexing;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -204,8 +204,7 @@ public class DefaultAclTest {
     DefaultAcl.fromConfiguration(indexingServiceMock);
 
     readersAcl.applyTo(defaultAclContainer);
-    verify(indexingServiceMock, times(1))
-        .indexItem(defaultAclContainer, RequestMode.SYNCHRONOUS);
+    verify(indexingServiceMock).indexItem(defaultAclContainer, RequestMode.SYNCHRONOUS);
   }
 
   @Test
@@ -222,8 +221,7 @@ public class DefaultAclTest {
         .setReaders(ImmutableList.of(Acl.getGoogleUserPrincipal("user1@example.com")))
         .build()
         .applyTo(defaultAclContainer);
-    verify(indexingServiceMock, times(1))
-        .indexItem(defaultAclContainer, RequestMode.SYNCHRONOUS);
+    verify(indexingServiceMock).indexItem(defaultAclContainer, RequestMode.SYNCHRONOUS);
   }
 
   @Test
@@ -477,7 +475,7 @@ public class DefaultAclTest {
 
     // "override" uses inheritance
     // verify that the items start out not equal before applying the default acl
-    assertFalse(expectedItem.equals(item));
+    assertNotEquals(expectedItem, item);
     assertTrue(defAcl.applyToIfEnabled(item));
     assertEquals(expectedItem, item);
   }

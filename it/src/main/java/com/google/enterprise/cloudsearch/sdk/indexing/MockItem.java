@@ -26,7 +26,6 @@ import com.google.common.collect.Multimap;
 import com.google.enterprise.cloudsearch.sdk.indexing.IndexingItemBuilder.FieldOrValue;
 import com.google.enterprise.cloudsearch.sdk.indexing.IndexingItemBuilder.ItemType;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
 import java.util.Optional;
 
 /**
@@ -51,6 +50,7 @@ public class MockItem {
   private static final String VERSION = "version";
   private static final String CREATE_TIME = "createTime";
   private static final String UPDATE_TIME = "updateTime";
+  private static final String ACL = "acl";
 
   private final String name;
   private final Multimap<String, Object> values;
@@ -61,27 +61,23 @@ public class MockItem {
   }
 
   public Item getItem() {
-    Acl acl = new Acl.Builder()
-        .setReaders(Collections.singletonList(Acl.getCustomerPrincipal()))
-        .build();
-    Item item = new IndexingItemBuilder(name)
+    return new IndexingItemBuilder(name)
         .setValues(values)
         .setTitle(FieldOrValue.withField(TITLE))
         .setSourceRepositoryUrl(FieldOrValue.withField(URL))
         .setItemType(getItemType(values))
-        .setObjectType(getSingleStringValue(values, OBJECT_TYPE))
-        .setMimeType(getSingleStringValue(values, MIME_TYPE))
-        .setContainerName(getSingleStringValue(values, CONTAINER))
+        .setObjectType(FieldOrValue.withField(OBJECT_TYPE))
+        .setMimeType(FieldOrValue.withField(MIME_TYPE))
+        .setContainerName(FieldOrValue.withField(CONTAINER))
         .setContentLanguage(FieldOrValue.withField(LANGUAGE))
         .setCreateTime(FieldOrValue.withField(CREATE_TIME))
         .setUpdateTime(FieldOrValue.withField(UPDATE_TIME))
-        .setHash(getSingleStringValue(values, HASH_VALUE))
+        .setHash(FieldOrValue.withField(HASH_VALUE))
         .setQueue(getSingleStringValue(values, QUEUE))
         .setVersion(getByteArrayValue(values, VERSION))
         .setPayload(getByteArrayValue(values, PAYLOAD))
-        .setAcl(acl)
+        .setAcl(MockItem.<Acl>getSingleValue(values, ACL).orElse(null))
         .build();
-    return item;
   }
 
   private static ItemType getItemType(Multimap<String, Object> values) {
@@ -90,8 +86,7 @@ public class MockItem {
   }
 
   private static String getSingleStringValue(Multimap<String, Object> values, String key) {
-    Object value = getSingleValue(values, key);
-    return value == null ? null : (String) value;
+    return MockItem.<String>getSingleValue(values, key).orElse(null);
   }
 
   private static byte[] getByteArrayValue(Multimap<String, Object> values, String key) {
@@ -99,15 +94,20 @@ public class MockItem {
     return value == null ? null : value.getBytes(StandardCharsets.UTF_8);
   }
 
-  private static Object getSingleValue(Multimap<String, Object> values, String key) {
+  /**
+   * @throws ClassCastException when there is a mismatch between
+   *         value in the map and expected type.
+   */
+  @SuppressWarnings("unchecked")
+  private static <T> Optional<T> getSingleValue(Multimap<String, Object> values, String key) {
     checkNotNull(values, "values can not be null");
     checkArgument(!Strings.isNullOrEmpty(key), "lookup key can not be null or empty");
-    Optional<Object> result = values
+    return values
         .get(key)
         .stream()
         .filter(v -> v != null)
+        .map(v -> (T) v)
         .findFirst();
-    return result.orElse(null);
   }
 
   /**
@@ -173,6 +173,11 @@ public class MockItem {
 
     public Builder setVersion(String version) {
       values.put(VERSION, version);
+      return this;
+    }
+
+    public Builder setAcl(Acl acl) {
+      values.put(ACL, acl);
       return this;
     }
 

@@ -21,6 +21,7 @@ import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.not;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
@@ -285,7 +286,7 @@ public class CSVRepositoryTest {
     config.put(IndexingItemBuilder.UPDATE_TIME_FIELD, "modified");
     config.put(IndexingItemBuilder.CREATE_TIME_FIELD, "created");
     config.put(IndexingItemBuilder.CONTENT_LANGUAGE_VALUE, "english");
-    config.put(IndexingItemBuilder.OBJECT_TYPE, "String");
+    config.put(IndexingItemBuilder.OBJECT_TYPE_VALUE, "String");
     setupConfig.initConfig(config);
 
     // initialize structured data
@@ -350,7 +351,7 @@ public class CSVRepositoryTest {
     config.put(IndexingItemBuilder.TITLE_FIELD, "term");
     config.put(IndexingItemBuilder.UPDATE_TIME_FIELD, "modified");
     config.put(IndexingItemBuilder.CREATE_TIME_FIELD, "created");
-    config.put(IndexingItemBuilder.OBJECT_TYPE, "Object Type");
+    config.put(IndexingItemBuilder.OBJECT_TYPE_VALUE, "Object Type");
     setupConfig.initConfig(config);
 
     // initialize structured data
@@ -415,7 +416,7 @@ public class CSVRepositoryTest {
     config.put(IndexingItemBuilder.TITLE_FIELD, "term");
     config.put(IndexingItemBuilder.UPDATE_TIME_FIELD, "modified");
     config.put(IndexingItemBuilder.CREATE_TIME_FIELD, "created");
-    config.put(IndexingItemBuilder.OBJECT_TYPE, "Object Type");
+    config.put(IndexingItemBuilder.OBJECT_TYPE_VALUE, "Object Type");
     setupConfig.initConfig(config);
 
     // initialize structured data
@@ -476,7 +477,7 @@ public class CSVRepositoryTest {
     config.put(CONTENT_HIGH, "term,definition");
     config.put(CONTENT_LOW, "author");
     config.put(IndexingItemBuilder.TITLE_FIELD, "term");
-    config.put(IndexingItemBuilder.OBJECT_TYPE, "Object Type");
+    config.put(IndexingItemBuilder.OBJECT_TYPE_VALUE, "Object Type");
     config.put(CSVFileManager.MULTIVALUE_COLUMNS, "updated");
     setupConfig.initConfig(config);
 
@@ -614,5 +615,43 @@ public class CSVRepositoryTest {
     CSVRepository csvRepository = new CSVRepository();
     thrown.expect(InvalidConfigurationException.class);
     csvRepository.init(localMockRepositoryContext);
+  }
+
+  @Test
+  public void getChanges_emptyIterable() throws Exception {
+    CSVRepository csvRepository = new CSVRepository();
+    try (CheckpointCloseableIterable<ApiOperation> iterable = csvRepository.getChanges(null)) {
+      assertNull(iterable.getCheckpoint());
+      assertFalse(iterable.hasMore());
+      Iterator<ApiOperation> iterator = iterable.iterator();
+      assertNotNull(iterator);
+      assertFalse(iterator.hasNext());
+    }
+  }
+
+  @Test
+  public void getDoc_throwsException() throws Exception {
+    CSVRepository csvRepository = new CSVRepository();
+    thrown.expect(UnsupportedOperationException.class);
+    csvRepository.getDoc(null);
+  }
+
+  @Test
+  public void exists_throwsException() throws Exception {
+    CSVRepository csvRepository = new CSVRepository();
+    thrown.expect(UnsupportedOperationException.class);
+    csvRepository.exists(null);
+  }
+
+  @Test
+  public void getIds_returnsNull() throws Exception {
+    CSVRepository csvRepository = new CSVRepository();
+    assertNull(csvRepository.getIds(null));
+  }
+
+  @Test
+  public void close_doesNothing() throws Exception {
+    CSVRepository csvRepository = new CSVRepository();
+    csvRepository.close();
   }
 }

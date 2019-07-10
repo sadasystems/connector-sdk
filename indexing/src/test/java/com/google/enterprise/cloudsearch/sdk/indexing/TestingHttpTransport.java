@@ -19,7 +19,8 @@ import static com.google.api.services.cloudsearch.v1.CloudSearch.DEFAULT_BASE_UR
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 import static java.net.HttpURLConnection.HTTP_OK;
-import static junit.framework.TestCase.assertTrue;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
 
 import com.google.api.client.googleapis.json.GoogleJsonError;
 import com.google.api.client.googleapis.json.GoogleJsonError.ErrorInfo;
@@ -52,20 +53,23 @@ import java.util.logging.Logger;
  * associated response.
  */
 class TestingHttpTransport extends MockHttpTransport {
-  private static final String SCHEMA_TYPE = "schema";
   private static final Logger logger = Logger.getLogger(TestingHttpTransport.class.getName());
+
   // constants used to build the response method/url string
   private static final String URL_FORMAT = "%sv1/indexing/datasources/%s/%s";
+  // TODO(jlacey): Avoid manual ? and & chars, maybe with a buildOptions(String...) helper method.
   private static final String ITEM_LIST_BRIEF = "?brief=true";
   private static final String ITEM_LIST_NOT_BRIEF = "?brief=false";
   private static final String ITEM_LIST_TOKEN = "&pageToken=";
   private static final String ITEM_LIST_LIMIT = "&pageSize=";
-  private static final String ENABLE_DEBUGGING = "&debugOptions.enableDebugging=";
+  private static final String ONLY_ENABLE_DEBUGGING = "?debugOptions.enableDebugging=";
+  private static final String AND_ENABLE_DEBUGGING = "&debugOptions.enableDebugging=";
 
   private static final String METHOD_GET = "GET";
   private static final String METHOD_POST = "POST";
   private static final String METHOD_DELETE = "DELETE";
 
+  private static final String TYPE_SCHEMA = "schema";
   private static final String TYPE_ITEM = "items";
 
   private static final String ITEM_DELETE_QUEUE = ":deleteQueueItems";
@@ -105,8 +109,10 @@ class TestingHttpTransport extends MockHttpTransport {
    * @param response the response object.
    */
   public void setRequestResponse(String method, String url, GenericJson response) {
-    assertTrue((method != null) && (url != null));
-    assertTrue(!method.isEmpty() && !url.isEmpty());
+    assertNotNull(method);
+    assertNotNull(url);
+    assertNotEquals("", method);
+    assertNotEquals("", url);
     String request = makeKey(method, url);
     if (this.requestMap.get(request) == null) {
       this.requestMap.put(request, new ArrayDeque<>());
@@ -244,7 +250,7 @@ class TestingHttpTransport extends MockHttpTransport {
             .setSourceId(sourceId)
             .setId(id)
             .setType(TYPE_ITEM)
-            .setOptions("?connectorName=" + connectorName + ENABLE_DEBUGGING + enableDebugging)
+            .setOptions("?connectorName=" + connectorName + AND_ENABLE_DEBUGGING + enableDebugging)
             .build();
     this.setRequestResponse(METHOD_GET, url, response);
   }
@@ -260,8 +266,8 @@ class TestingHttpTransport extends MockHttpTransport {
         new RequestUrlBuilder()
             .setBaseUrl(DEFAULT_BASE_URL)
             .setSourceId(sourceId)
-            .setType(SCHEMA_TYPE)
-            .setOptions("?" + ENABLE_DEBUGGING + enableDebugging)
+            .setType(TYPE_SCHEMA)
+            .setOptions(ONLY_ENABLE_DEBUGGING + enableDebugging)
             .build();
     this.setRequestResponse(METHOD_GET, url, response);
   }
@@ -289,7 +295,7 @@ class TestingHttpTransport extends MockHttpTransport {
     String options = ""; // many options for list Items, order is important
     options += brief ? ITEM_LIST_BRIEF : ITEM_LIST_NOT_BRIEF;
     options += "&connectorName=" + connectorName;
-    options += ENABLE_DEBUGGING + enableDebugging;
+    options += AND_ENABLE_DEBUGGING + enableDebugging;
     if ((token != null) && !token.isEmpty()) {
       options += ITEM_LIST_TOKEN + token;
     }
@@ -313,8 +319,25 @@ class TestingHttpTransport extends MockHttpTransport {
    * @param sourceId source ID
    * @param id the item ID
    * @param response the desired returned response
+   * @deprecated use {@link #addIndexItemReqResp}
    */
   public void addUpdateItemReqResp(
+      String sourceId, String id, boolean enableDebugging, GenericJson response) {
+    addIndexItemReqResp(sourceId, id, enableDebugging, response);
+  }
+
+  /**
+   * Add a request/response pair for simulated {@link IndexingService#indexItem(Item, boolean)}
+   * command.
+   *
+   * <p>This command is unique in that it has a non-standard URL format and has additional options
+   * for incremental and content.
+   *
+   * @param sourceId source ID
+   * @param id the item ID
+   * @param response the desired returned response
+   */
+  public void addIndexItemReqResp(
       String sourceId, String id, boolean enableDebugging, GenericJson response) {
     // TODO(tvartak) : Validate incremental using priority
     String url =

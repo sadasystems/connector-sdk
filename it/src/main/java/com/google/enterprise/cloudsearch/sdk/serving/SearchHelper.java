@@ -6,6 +6,7 @@ import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.http.HttpRequestInitializer;
 import com.google.api.client.http.HttpTransport;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.jackson2.JacksonFactory;
@@ -15,6 +16,8 @@ import com.google.api.services.cloudsearch.v1.model.RequestOptions;
 import com.google.api.services.cloudsearch.v1.model.SearchRequest;
 import com.google.api.services.cloudsearch.v1.model.SearchResponse;
 import com.google.api.services.cloudsearch.v1.model.SearchResult;
+import com.google.enterprise.cloudsearch.sdk.BaseApiService.RetryRequestInitializer;
+import com.google.enterprise.cloudsearch.sdk.RetryPolicy;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -32,7 +35,8 @@ import java.util.Set;
  * Sample usage:
  *
  * <pre>
- *   SearchAuthInfo userAuthInfo = new SearchAuthInfo(clientSecrets, credentialsDirectory, userEmail);
+ *   SearchAuthInfo userAuthInfo =
+ *       new SearchAuthInfo(clientSecrets, credentialsDirectory, userEmail);
  *   SearchHelper searchHelper = SearchHelper.createSearchHelper(
  *       userAuthInfo,
  *       searchApplicationId,
@@ -48,6 +52,8 @@ public class SearchHelper {
   private static final Set<String> API_SCOPES =
       Collections.singleton("https://www.googleapis.com/auth/cloud_search");
   private static final JsonFactory JSON_FACTORY = JacksonFactory.getDefaultInstance();
+  private static final RetryRequestInitializer RETRY_REQUEST_INITIALIZER =
+      new RetryRequestInitializer(new RetryPolicy.Builder().build());
 
   private final CloudSearch cloudSearch;
   private final String searchApplicationId;
@@ -55,18 +61,23 @@ public class SearchHelper {
   /**
    * Factory method for {@code SearchHelper} objects.
    *
-   * @param searchAuthInfo - object containing the info to authenticate the impersonated user.
-   * @param searchApplicationId - ID of the serving application linked to the data sourced containing
-   *  the items to serving (this is can be obtained from the Admin console).
-   * @param rootUrl - URL of the Indexing API.
+   * @param searchAuthInfo object containing the info to authenticate the impersonated user
+   * @param searchApplicationId ID of the serving application linked to the data sourced containing
+   *  the items to serving (this is can be obtained from the Admin console)
+   * @param rootUrl URL of the Indexing API
    */
   public static SearchHelper createSearchHelper(
       SearchAuthInfo searchAuthInfo, String searchApplicationId, Optional<String> rootUrl)
       throws GeneralSecurityException, IOException {
     HttpTransport transport = GoogleNetHttpTransport.newTrustedTransport();
     Credential credential = createCredentials(transport, searchAuthInfo);
-    CloudSearch.Builder builder = new CloudSearch.Builder(transport, JSON_FACTORY, credential)
-        .setApplicationName(SEARCH_APPLICATION_NAME);
+
+    CloudSearch.Builder builder =
+        new CloudSearch.Builder(
+                transport,
+                JSON_FACTORY,
+                createChainedHttpRequestInitializer(credential, RETRY_REQUEST_INITIALIZER))
+            .setApplicationName(SEARCH_APPLICATION_NAME);
     rootUrl.ifPresent(r -> builder.setRootUrl(r));
     return new SearchHelper(builder.build(), searchApplicationId);
   }
@@ -98,18 +109,29 @@ public class SearchHelper {
     return flow.loadCredential(searchAuthInfo.getUserEmail());
   }
 
+  private static HttpRequestInitializer createChainedHttpRequestInitializer(
+      HttpRequestInitializer... initializers) {
+    return request -> {
+      for (HttpRequestInitializer initializer : initializers) {
+        if (initializer != null) {
+          initializer.initialize(request);
+        }
+      }
+    };
+  }
+
   public static void main(String args[]) throws GeneralSecurityException, IOException {
-    final String NL = System.lineSeparator();
+    String nl = System.lineSeparator();
     if (args.length < 6) {
       System.err.println(
-          "Usage: SearchHelper <secrets_path> <store_dir> <user_email> <root_url> <app_id>" + NL +
-          "where" + NL +
-          "  <secrets_path>: path to the clients secret JSON of the user doing the serving." + NL +
-          "  <store_dir>: path to the directory with the stored credentials for the user." + NL +
-          "  <user_email>: e-mail of the user performing the serving" + NL +
-          "  <root_url>: URL of the Indexing API endpoint." + NL +
-          "  <app_id>: ID of the serving application." + NL +
-          "  <query>: Query for the items to serving." + NL
+          "Usage: SearchHelper <secrets_path> <store_dir> <user_email> <root_url> <app_id>" + nl
+          + "where" + nl
+          + "  <secrets_path>: path to the clients secret JSON of the user doing the serving." + nl
+          + "  <store_dir>: path to the directory with the stored credentials for the user." + nl
+          + "  <user_email>: e-mail of the user performing the serving" + nl
+          + "  <root_url>: URL of the Indexing API endpoint." + nl
+          + "  <app_id>: ID of the serving application." + nl
+          + "  <query>: Query for the items to serving." + nl
       );
       System.exit(1);
     }

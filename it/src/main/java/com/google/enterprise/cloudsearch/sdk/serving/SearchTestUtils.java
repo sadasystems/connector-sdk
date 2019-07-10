@@ -15,9 +15,14 @@
  */
 package com.google.enterprise.cloudsearch.sdk.serving;
 
+import static org.junit.Assert.assertTrue;
+
 import com.google.api.services.cloudsearch.v1.model.SearchResponse;
 import com.google.api.services.cloudsearch.v1.model.SearchResult;
+import java.io.File;
 import java.io.IOException;
+import java.security.GeneralSecurityException;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
@@ -31,7 +36,7 @@ import org.awaitility.Duration;
 public class SearchTestUtils {
 
   private static final Logger logger = Logger.getLogger(SearchTestUtils.class.getName());
-  private static final Duration ITEM_EQUAL_TIMEOUT = new Duration(20, TimeUnit.SECONDS);
+  private static final Duration ITEM_EQUAL_TIMEOUT = new Duration(30, TimeUnit.SECONDS);
   private static final Duration ITEM_EQUAL_POLL_INTERVAL = Duration.TWO_SECONDS;
   private final SearchHelper searchHelper;
 
@@ -39,18 +44,15 @@ public class SearchTestUtils {
     this.searchHelper = searchHelper;
   }
 
-  private String getUrl(String itemId) {
-    return String.format("www.google.com/%s", itemId);
-  }
-
-  public void waitUntilResultExists(String itemId, String query) throws IOException {
-    Awaitility.await()
-        .atMost(ITEM_EQUAL_TIMEOUT)
+  public void waitUntilItemServed(String itemId, String query) throws IOException {
+    Awaitility.with()
         .pollInterval(ITEM_EQUAL_POLL_INTERVAL)
-        .untilTrue(new AtomicBoolean(resultExists(itemId, query)));
+        .await()
+        .atMost(ITEM_EQUAL_TIMEOUT)
+        .until(() -> resultExists(itemId, query));
   }
 
-  public void waitUntilResultNotExists(String itemId, String query) throws IOException {
+  public void waitUntilItemNotServed(String itemId, String query) throws IOException {
     Awaitility.await()
         .atMost(ITEM_EQUAL_TIMEOUT)
         .pollInterval(ITEM_EQUAL_POLL_INTERVAL)
@@ -58,21 +60,53 @@ public class SearchTestUtils {
   }
 
   private boolean resultExists(String itemId, String query) throws IOException {
-    String expectedUrl = getUrl(itemId);
     SearchResponse searchResponse = searchHelper.search(query);
     long resultCountExact = searchResponse.getResultCountExact();
-    logger.log(Level.FINE,"Search response: %s ", searchResponse.toPrettyString());
-    // Incase  deleted items are still serving then check for new indexed item id present or not.
+    logger.log(Level.FINE, "Search response: {0}", searchResponse.toPrettyString());
     if (resultCountExact > 0) {
       for (SearchResult result : searchResponse.getResults()) {
-        boolean urlPresent = expectedUrl.equals(result.getUrl());
+        boolean titlePresent = result.getTitle().equals(itemId);
         boolean isSnippetRight = result.getSnippet().getSnippet().contains(query);
-        if (urlPresent & isSnippetRight) {
-          logger.log(Level.FINE,"Expected Item in Search Result : %s ", result);
+        if (titlePresent && isSnippetRight) {
+          logger.log(Level.FINE, "Expected Item in Search Result: {0}", result);
           return true;
         }
       }
     }
     return false;
+  }
+
+  /**
+   * Utility method to return SearchHelper object.
+   *
+   * @param authInfo string array containing
+   * userEmail of the user to client secrets file,
+   * credentialsDirectory path containing the StoredCredential file and
+   * clientSecrets path to the client secrets JSON file
+   * @param applicationId Id of the serving application
+   * @param rootUrl URL of the Indexing API
+   */
+  public static SearchHelper getSearchHelper(
+      String[] authInfo,
+      String applicationId,
+      Optional<String> rootUrl) throws IOException, GeneralSecurityException {
+    if (authInfo.length < 3) {
+      throw new IllegalArgumentException("Missing authInfo parameters. Paramaters include "
+          + "-Dapi.test.authInfo=user1@domain.com,${credentials_dir},${client_secrets}");
+    }
+    String authorizedUserEmail = authInfo[0];
+    String credDirectory = authInfo[1];
+    String clientCredential = authInfo[2];
+    File clientCredentials = new File(clientCredential);
+    assertTrue(
+        String.format("Client credentials file %s does not exist", clientCredentials),
+        clientCredentials.exists());
+    File credentialsDirectory = new File(credDirectory);
+    assertTrue(
+        String.format("Credentials directory %s does not exist", credentialsDirectory),
+        credentialsDirectory.exists());
+    SearchAuthInfo searchAuthInfo =
+        new SearchAuthInfo(clientCredentials, credentialsDirectory, authorizedUserEmail);
+    return SearchHelper.createSearchHelper(searchAuthInfo, applicationId, rootUrl);
   }
 }

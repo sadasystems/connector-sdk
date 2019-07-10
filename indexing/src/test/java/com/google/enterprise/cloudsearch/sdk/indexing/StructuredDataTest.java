@@ -65,6 +65,7 @@ import com.google.enterprise.cloudsearch.sdk.config.Configuration.SetupConfigRul
 import com.google.enterprise.cloudsearch.sdk.indexing.StructuredData.ResetStructuredDataRule;
 import java.io.File;
 import java.io.IOException;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -100,7 +101,8 @@ public class StructuredDataTest {
     P1(1),
     P2(2),
     P3(3),
-    P4(4);
+    P4(4),
+    P5(5);
 
     final int intVal;
 
@@ -131,16 +133,19 @@ public class StructuredDataTest {
   public void testReInit() {
     StructuredData.init(new Schema());
     assertTrue(StructuredData.isInitialized());
-    thrown.expect(IllegalStateException.class);
     StructuredData.init(new Schema());
+    assertTrue(StructuredData.isInitialized());
   }
 
   @Test
   public void testInit_thenInitFromConfiguration() throws Exception {
+    setupConfig.initConfig(new Properties());
+    when(mockIndexingService.getSchema()).thenReturn(new Schema());
+
     StructuredData.init(new Schema());
     assertTrue(StructuredData.isInitialized());
-    thrown.expect(IllegalStateException.class);
     StructuredData.initFromConfiguration(mockIndexingService);
+    assertTrue(StructuredData.isInitialized());
   }
 
   @Test
@@ -150,8 +155,59 @@ public class StructuredDataTest {
 
     StructuredData.initFromConfiguration(mockIndexingService);
     assertTrue(StructuredData.isInitialized());
-    thrown.expect(IllegalStateException.class);
     StructuredData.init(new Schema());
+    assertTrue(StructuredData.isInitialized());
+  }
+
+  @Test
+  public void initFromConfiguration_multipleCalls_succeeds() throws Exception {
+    setupConfig.initConfig(new Properties());
+    when(mockIndexingService.getSchema()).thenReturn(new Schema());
+
+    StructuredData.initFromConfiguration(mockIndexingService);
+    assertTrue(StructuredData.isInitialized());
+    StructuredData.initFromConfiguration(mockIndexingService);
+    assertTrue(StructuredData.isInitialized());
+  }
+
+  @Test
+  public void init_multipleCallsDifferentSchemas_lastWins() throws Exception {
+    Schema schema1 = new Schema().setObjectDefinitions(
+        Collections.singletonList(getObjectDefinition("myObject1", Collections.emptyList())));
+    Schema schema2 = new Schema().setObjectDefinitions(
+        Collections.singletonList(getObjectDefinition("myObject2", Collections.emptyList())));
+
+    StructuredData.init(schema1);
+    assertTrue(StructuredData.isInitialized());
+    assertTrue(StructuredData.hasObjectDefinition("myObject1"));
+    assertFalse(StructuredData.hasObjectDefinition("myObject2"));
+
+    StructuredData.init(schema2);
+    assertTrue(StructuredData.isInitialized());
+    assertTrue(StructuredData.hasObjectDefinition("myObject2"));
+    assertFalse(StructuredData.hasObjectDefinition("myObject1"));
+  }
+
+  @Test
+  public void initFromConfiguration_multipleCallsDifferentSchemas_lastWins() throws Exception {
+    Schema schema1 = new Schema().setObjectDefinitions(
+        Collections.singletonList(getObjectDefinition("myObject1", Collections.emptyList())));
+    Schema schema2 = new Schema().setObjectDefinitions(
+        Collections.singletonList(getObjectDefinition("myObject2", Collections.emptyList())));
+    when(mockIndexingService.getSchema())
+        .thenReturn(schema1)
+        .thenReturn(schema2);
+
+    setupConfig.initConfig(new Properties());
+    StructuredData.initFromConfiguration(mockIndexingService);
+    assertTrue(StructuredData.isInitialized());
+    assertTrue(StructuredData.hasObjectDefinition("myObject1"));
+    assertFalse(StructuredData.hasObjectDefinition("myObject2"));
+
+    StructuredData.initFromConfiguration(mockIndexingService);
+    assertTrue(StructuredData.isInitialized());
+    assertTrue(StructuredData.hasObjectDefinition("myObject2"));
+    assertFalse(StructuredData.hasObjectDefinition("myObject1"));
   }
 
   @Test
@@ -340,7 +396,8 @@ public class StructuredDataTest {
                     new NamedProperty()
                         .setName("enumProperty")
                         .setEnumValues(
-                            new EnumValues().setValues(Arrays.asList("P0", "P1", "P3", "P4"))),
+                            new EnumValues()
+                                .setValues(Arrays.asList("P0", "P1", "P3", "P4", "P5"))),
                     new NamedProperty()
                         .setName("objectProperty")
                         .setObjectValues(
@@ -371,10 +428,8 @@ public class StructuredDataTest {
     values.put("enumProperty", MyEnum.P0);
     values.put("enumProperty", MyEnum.P1.intVal);
     values.put("enumProperty", "3");
-    values.put(
-        "enumProperty", 4
-        /** P4 */
-        );
+    values.put("enumProperty", 4);
+    values.put("enumProperty", "P5");
     values.put("userProperty", userPrincipal);
     Multimap<String, Object> subObject = ArrayListMultimap.create();
     subObject.put("subTextProperty", "sub-v1");
@@ -746,7 +801,30 @@ public class StructuredDataTest {
   }
 
   @Test
-  public void testDateConverter() throws IOException {
+  public void dateTimeConverter_fromDate() throws IOException {
+    setupConfig.initConfig(new Properties());
+    when(mockIndexingService.getSchema()).thenReturn(new Schema());
+    StructuredData.initFromConfiguration(mockIndexingService);
+
+    String rfc3339String = "2018-08-08T15:48:17.000-04:00";
+    // DATETIME_CONVERTER assumes the current time zone, so we need to
+    // construct an expected value in the local time zone.
+    DateTime expected = new DateTime(new DateTime(rfc3339String).getValue());
+
+    Converter<Object, DateTime> converter = StructuredData.DATETIME_CONVERTER;
+    java.util.Date input = java.util.Date.from(ZonedDateTime.parse(rfc3339String).toInstant());
+    assertThat(converter.convert(input), equalTo(expected));
+  }
+
+  @Test
+  public void dateTimeConverter_fromUnsupportedObject_throwsException() throws IOException {
+    thrown.expect(NumberFormatException.class);
+    thrown.expectMessage("Object");
+    StructuredData.DATETIME_CONVERTER.convert(new Object());
+  }
+
+  @Test
+  public void dateConverter_fromString() throws IOException {
     setupConfig.initConfig(new Properties());
     when(mockIndexingService.getSchema()).thenReturn(new Schema());
     StructuredData.initFromConfiguration(mockIndexingService);
@@ -775,7 +853,7 @@ public class StructuredDataTest {
   }
 
   @Test
-  public void testDateTime_noDate() throws IOException {
+  public void dateConverter_fromString_noDate() throws IOException {
     setupConfig.initConfig(new Properties());
     when(mockIndexingService.getSchema()).thenReturn(new Schema());
     StructuredData.initFromConfiguration(mockIndexingService);
@@ -786,7 +864,7 @@ public class StructuredDataTest {
   }
 
   @Test
-  public void testDateTime_unparsedCharacters() throws IOException {
+  public void dateConverter_fromString_unparsedCharacters() throws IOException {
     setupConfig.initConfig(new Properties());
     when(mockIndexingService.getSchema()).thenReturn(new Schema());
     StructuredData.initFromConfiguration(mockIndexingService);
@@ -794,6 +872,37 @@ public class StructuredDataTest {
     Converter<Object, Date> converter = StructuredData.DATE_CONVERTER;
     thrown.expect(NumberFormatException.class);
     converter.convert("2018-08-08T15:48:17.000-07:00 and so on");
+  }
+
+  @Test
+  public void dateConverter_fromDateTime() throws IOException {
+    setupConfig.initConfig(new Properties());
+    when(mockIndexingService.getSchema()).thenReturn(new Schema());
+    StructuredData.initFromConfiguration(mockIndexingService);
+
+    Date expected = new Date().setYear(2018).setMonth(8).setDay(8);
+
+    Converter<Object, Date> converter = StructuredData.DATE_CONVERTER;
+    for (String dateString : new String[] {
+          // API Date class doesn't have a time zone, so anything will match.
+          "2018-08-08T23:48:17-11:00", // 2018-08-09 in most local time zones.
+          "2018-08-08T00:01:00+14:00", // 2018-08-07 in most local time zones.
+          "2018-08-08",
+        }) {
+      try {
+        collector.checkThat(dateString, converter.convert(new DateTime(dateString)),
+            equalTo(expected));
+      } catch (NumberFormatException e) {
+        collector.addError(e);
+      }
+    }
+  }
+
+  @Test
+  public void dateConverter_fromUnsupportedObject_throwsException() throws IOException {
+    thrown.expect(NumberFormatException.class);
+    thrown.expectMessage("Object");
+    StructuredData.DATE_CONVERTER.convert(new Object());
   }
 
   private void setupSchema() {

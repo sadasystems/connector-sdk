@@ -32,6 +32,8 @@ import com.google.enterprise.cloudsearch.sdk.config.Configuration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -76,25 +78,41 @@ public class IndexingItemBuilder {
     VIRTUAL_CONTAINER_ITEM
   }
 
+  private static final String MIME_TYPE = "itemMetadata.mimeType";
   private static final String TITLE = "itemMetadata.title";
   private static final String SOURCE_REPOSITORY_URL = "itemMetadata.sourceRepositoryUrl";
   private static final String UPDATE_TIME = "itemMetadata.updateTime";
   private static final String CREATE_TIME = "itemMetadata.createTime";
   private static final String CONTENT_LANGUAGE = "itemMetadata.contentLanguage";
+  private static final String HASH = "itemMetadata.hash";
+  private static final String CONTAINER_NAME = "itemMetadata.containerName";
+  private static final String SEARCH_QUALITY_METADATA_QUALITY =
+      "itemMetadata.searchQualityMetadata.quality";
+  public static final String OBJECT_TYPE = "itemMetadata.objectType";
 
+  public static final String MIME_TYPE_FIELD = MIME_TYPE + ".field";
   public static final String TITLE_FIELD = TITLE + ".field";
   public static final String SOURCE_REPOSITORY_URL_FIELD = SOURCE_REPOSITORY_URL + ".field";
   public static final String UPDATE_TIME_FIELD = UPDATE_TIME + ".field";
   public static final String CREATE_TIME_FIELD = CREATE_TIME + ".field";
   public static final String CONTENT_LANGUAGE_FIELD = CONTENT_LANGUAGE + ".field";
+  public static final String HASH_FIELD = HASH + ".field";
+  public static final String CONTAINER_NAME_FIELD = CONTAINER_NAME + ".field";
+  public static final String SEARCH_QUALITY_METADATA_QUALITY_FIELD =
+      SEARCH_QUALITY_METADATA_QUALITY + ".field";
+  public static final String OBJECT_TYPE_FIELD = OBJECT_TYPE + ".field";
 
+  public static final String MIME_TYPE_VALUE = MIME_TYPE + ".defaultValue";
   public static final String TITLE_VALUE = TITLE + ".defaultValue";
   public static final String SOURCE_REPOSITORY_URL_VALUE = SOURCE_REPOSITORY_URL + ".defaultValue";
   public static final String UPDATE_TIME_VALUE = UPDATE_TIME + ".defaultValue";
   public static final String CREATE_TIME_VALUE = CREATE_TIME + ".defaultValue";
   public static final String CONTENT_LANGUAGE_VALUE = CONTENT_LANGUAGE + ".defaultValue";
-
-  public static final String OBJECT_TYPE = "itemMetadata.objectType";
+  public static final String HASH_VALUE = HASH + ".defaultValue";
+  public static final String CONTAINER_NAME_VALUE = CONTAINER_NAME + ".defaultValue";
+  public static final String SEARCH_QUALITY_METADATA_QUALITY_VALUE =
+      SEARCH_QUALITY_METADATA_QUALITY + ".defaultValue";
+  public static final String OBJECT_TYPE_VALUE = OBJECT_TYPE + ".defaultValue";
 
   // These methods are not used above so that the constants will be detected as such by javadoc.
   private static String dotField(String configKey) {
@@ -107,26 +125,31 @@ public class IndexingItemBuilder {
 
   private final String name;
   private Acl acl;
-  private String objectType;
-  private String mimeType;
   private Multimap<String, Object> values;
 
+  private FieldOrValue<String> mimeType;
   private FieldOrValue<String> title;
   private FieldOrValue<String> url;
   private FieldOrValue<DateTime> updateTime;
   private FieldOrValue<DateTime> createTime;
   private FieldOrValue<String> language;
+  private FieldOrValue<String> hash;
+  private FieldOrValue<String> containerName;
+  private FieldOrValue<Double> searchQualityMetadataQuality;
+  private FieldOrValue<String> objectType;
 
+  private final Optional<FieldOrValue<String>> configMimeType;
   private final Optional<FieldOrValue<String>> configTitle;
   private final Optional<FieldOrValue<String>> configUrl;
   private final Optional<FieldOrValue<DateTime>> configUpdateTime;
   private final Optional<FieldOrValue<DateTime>> configCreateTime;
   private final Optional<FieldOrValue<String>> configLanguage;
-  private final Optional<String> configObjectType;
+  private final Optional<FieldOrValue<String>> configHash;
+  private final Optional<FieldOrValue<String>> configContainerName;
+  private final Optional<FieldOrValue<Double>> configSearchQualityMetadataQuality;
+  private final Optional<FieldOrValue<String>> configObjectType;
 
   private SearchQualityMetadata searchQuality;
-  private String hash;
-  private String container;
   private String queue;
   private byte[] payload;
   private byte[] version;
@@ -138,6 +161,7 @@ public class IndexingItemBuilder {
    * <p>Optional configuration parameters for {@code ItemMetadata}:
    *
    * <ul>
+   *   <li>{@code itemMetadata.mimeType.field} - The key for the mimeType field in the values map.
    *   <li>{@code itemMetadata.title.field} - The key for the title field in the values map.
    *   <li>{@code itemMetadata.sourceRepositoryUrl.field} - The key for the URL field in the
    *       values map.
@@ -147,6 +171,12 @@ public class IndexingItemBuilder {
    *       values map.
    *   <li>{@code itemMetadata.contentLanguage.field} - The key for the content language field
    *       in the values map.
+   *   <li>{@code itemMetadata.hash.field} - The key for the hash field in the values map.
+   *   <li>{@code itemMetadata.containerName.field} - The key for the container name field
+   *       in the values map.
+   *   <li>{@code itemMetadata.searchQualityMetadata.quality.field} - The key for the
+   *       SearchQualityMetadata quality field in the values map.
+   *   <li>{@code itemMetadata.mimeType.defaultValue} - The value for the media type.
    *   <li>{@code itemMetadata.title.defaultValue} - The value for the title.
    *   <li>{@code itemMetadata.sourceRepositoryUrl.defaultValue} - The value for the URL.
    *   <li>{@code itemMetadata.updateTime.defaultValue} - The value for the update time in
@@ -154,6 +184,19 @@ public class IndexingItemBuilder {
    *   <li>{@code itemMetadata.createTime.defaultValue} - The value for the create time in
    *       RFC 3339 format.
    *   <li>{@code itemMetadata.contentLanguage.defaultValue} - The value for the content language.
+   *   <li>{@code itemMetadata.hash.defaultValue} - The value for the hash.
+   *   <li>{@code itemMetadata.containerName.defaultValue} - The value for the container name.
+   *   <li>{@code itemMetadata.searchQualityMetadata.quality.defaultValue} - The value for
+   *       the SearchQualityMetadata quality.
+   * </ul>
+   *
+   * <p>Optional configuration parameters for {@code ItemMetadata} and {@code StructuredData}:
+   *
+   * <ul>
+   *   <li>{@code itemMetadata.objectType.field} - The key for the object type field in the
+   *       values map.
+   *   <li>{@code itemMetadata.objectType.defaultValue} - The value for the object type.
+   * </ul>
    *
    * Note: For each {@code ItemMetadata} field, check the following in order for a non-empty value:
    * <ol>
@@ -163,25 +206,33 @@ public class IndexingItemBuilder {
    *       a key into the the {@link #setValues values map}.
    *   <li> A config property with a suffix of {@code .defaultValue}.
    * </ol>
-   *
-   * <p>Optional configuration parameters for {@code StructuredData}:
-   *
-   * <ul>
-   *   <li>{@code itemMetadata.objectType} - Specifies the object type from the schema to use
-   *       for structured data.
-   * </ul>
    */
   public static IndexingItemBuilder fromConfiguration(String name) {
+    String objectType = Configuration.getString(OBJECT_TYPE, "").get();
+    if (!objectType.isEmpty()) {
+      logger.log(Level.WARNING, "{0} is deprecated, use {1}={2}.",
+          new Object[] { OBJECT_TYPE, OBJECT_TYPE_VALUE, objectType });
+    }
+
     ConfigDefaults config = new ConfigDefaults()
+        .setMimeType(fieldOrValue(MIME_TYPE, Configuration.STRING_PARSER))
         .setTitle(fieldOrValue(TITLE, Configuration.STRING_PARSER))
         .setUrl(fieldOrValue(SOURCE_REPOSITORY_URL, Configuration.STRING_PARSER))
         .setUpdateTime(fieldOrValue(UPDATE_TIME, DATE_PARSER))
         .setCreateTime(fieldOrValue(CREATE_TIME, DATE_PARSER))
         .setLanguage(fieldOrValue(CONTENT_LANGUAGE, Configuration.STRING_PARSER))
+        .setHash(fieldOrValue(HASH, Configuration.STRING_PARSER))
+        .setContainerName(fieldOrValue(CONTAINER_NAME, Configuration.STRING_PARSER))
+        .setSearchQualityMetadataQuality(fieldOrValue(SEARCH_QUALITY_METADATA_QUALITY,
+                Configuration.DOUBLE_PARSER))
         .setObjectType(
-            Optional.ofNullable(
-                Strings.emptyToNull(
-                    Configuration.getString(OBJECT_TYPE, "").get())));
+            fieldOrValue(
+                OBJECT_TYPE,
+                Configuration.getString(OBJECT_TYPE_FIELD, "").get(),
+                Configuration.getOverriden(
+                    OBJECT_TYPE_VALUE, Configuration.getString(OBJECT_TYPE, ""))
+                    .get(),
+                Configuration.STRING_PARSER));
     return new IndexingItemBuilder(name, config);
   }
 
@@ -196,11 +247,15 @@ public class IndexingItemBuilder {
     this.name = name;
     this.values = ArrayListMultimap.create();
 
+    this.configMimeType = config.mimeType;
     this.configTitle = config.title;
     this.configUrl = config.url;
     this.configUpdateTime = config.updateTime;
     this.configCreateTime = config.createTime;
     this.configLanguage = config.language;
+    this.configHash = config.hash;
+    this.configContainerName = config.containerName;
+    this.configSearchQualityMetadataQuality = config.searchQualityMetadataQuality;
     this.configObjectType = config.objectType;
   }
 
@@ -217,13 +272,39 @@ public class IndexingItemBuilder {
 
   /**
    * Sets the name of the object definition from the schema to use when
-   * constructing the {@code ItemStructuredData}.
+   * constructing the {@code ItemStructuredData}, either from
+   * the given field (or key) in the {@code values} multimap, or a literal value.
+   *
+   * @param objectType the source of the object definition name
+   * @return this instance
+   */
+  public IndexingItemBuilder setObjectType(FieldOrValue<String> objectType) {
+    this.objectType = objectType;
+    return this;
+  }
+
+  /**
+   * Sets the name of the object definition from the schema to use when
+   * constructing the {@code ItemStructuredData}
    *
    * @param objectType the object definition name
    * @return this instance
+   * @deprecated Use {@link #setObjectType(FieldOrValue)} with {@link FieldOrValue#withValue}
    */
+  @Deprecated
   public IndexingItemBuilder setObjectType(String objectType) {
-    this.objectType = objectType;
+    return setObjectType(FieldOrValue.withValue(objectType));
+  }
+
+  /**
+   * Sets the {@code mimeType} field value for the {@code ItemMetadata}, either from
+   * the given field (or key) in the {@code values} multimap, or a literal value.
+   *
+   * @param mimeType the source of the media type
+   * @return this instance
+   */
+  public IndexingItemBuilder setMimeType(FieldOrValue<String> mimeType) {
+    this.mimeType = mimeType;
     return this;
   }
 
@@ -232,10 +313,11 @@ public class IndexingItemBuilder {
    *
    * @param mimeType a media type, such as "application/pdf"
    * @return this instance
+   * @deprecated Use {@link #setMimeType(FieldOrValue)} with {@link FieldOrValue#withValue}
    */
+  @Deprecated
   public IndexingItemBuilder setMimeType(String mimeType) {
-    this.mimeType = mimeType;
-    return this;
+    return setMimeType(FieldOrValue.withValue(mimeType));
   }
 
   /**
@@ -318,12 +400,43 @@ public class IndexingItemBuilder {
 
   /**
    * Sets the {@code searchQualityMetadata} field value for the {@code ItemMetadata}.
+   * <p>
+   * Using this setter will override any value previously set using {@link
+   * #setSearchQualityMetadataQuality(FieldOrValue)}.
    *
    * @param searchQuality the {@code SearchQualityMetadata} instance
    * @return this instance
    */
   public IndexingItemBuilder setSearchQualityMetadata(SearchQualityMetadata searchQuality) {
     this.searchQuality = searchQuality;
+    this.searchQualityMetadataQuality = null;
+    return this;
+  }
+
+  /**
+   * Sets the {@code searchQualityMetadata.quality} field value for the {@code ItemMetadata}.
+   * <p>
+   * Using this setter will override any value previously set using {@link
+   * #setSearchQualityMetadata(SearchQualityMetadata)}.
+   *
+   * @param quality the source of the {@code searchQualityMetadata.quality} value
+   * @return this instance
+   */
+  public IndexingItemBuilder setSearchQualityMetadataQuality(FieldOrValue<Double> quality) {
+    this.searchQualityMetadataQuality = quality;
+    this.searchQuality = null;
+    return this;
+  }
+
+  /**
+   * Sets the {@code hash} field value for the {@code ItemMetadata}, either from
+   * the given field (or key) in the {@code values} multimap, or a literal value.
+   *
+   * @param hash the source of the {@code hash} field value
+   * @return this instance
+   */
+  public IndexingItemBuilder setHash(FieldOrValue<String> hash) {
+    this.hash = hash;
     return this;
   }
 
@@ -332,21 +445,35 @@ public class IndexingItemBuilder {
    *
    * @param hash the {@code hash} field value
    * @return this instance
+   * @deprecated Use {@link #setHash(FieldOrValue)} with {@link FieldOrValue#withValue}
    */
+  @Deprecated
   public IndexingItemBuilder setHash(String hash) {
-    this.hash = hash;
+    return setHash(FieldOrValue.withValue(hash));
+  }
+
+  /**
+   * Sets the {@code containerName} field value for the {@code ItemMetadata}, either from
+   * the given field (or key) in the {@code values} multimap, or a literal value.
+   *
+   * @param containerName the source of the {@code containerName} field value
+   * @return this instance
+   */
+  public IndexingItemBuilder setContainerName(FieldOrValue<String> containerName) {
+    this.containerName = containerName;
     return this;
   }
 
   /**
    * Sets the {@code containerName} field value for the {@code ItemMetadata}.
    *
-   * @param container the {@code containerName} field value
+   * @param containerName the {@code containerName} field value
    * @return this instance
+   * @deprecated Use {@link #setContainerName(FieldOrValue)} with {@link FieldOrValue#withValue}
    */
-  public IndexingItemBuilder setContainerName(String container) {
-    this.container = container;
-    return this;
+  @Deprecated
+  public IndexingItemBuilder setContainerName(String containerName) {
+    return setContainerName(FieldOrValue.withValue(containerName));
   }
 
   /**
@@ -398,8 +525,9 @@ public class IndexingItemBuilder {
    *
    * <p>Aside from the {@code name} and {@code values} map, all of the attributes are optional.
    * The metadata attributes
-   * ({@code title, sourceRepositoryUrl, updateTime, createTime, contentLanguage}) can be set
-   * explicitly in the setter, from the {@code values} map, or using the
+   * ({@code mimeType, title, sourceRepositoryUrl, updateTime, createTime, contentLanguage,
+   * hash, containerName})
+   * can be set explicitly in the setter, from the {@code values} map, or using the
    * {@link #fromConfiguration configuration properties}.
    *
    * @return fully built {@link Item} object
@@ -413,51 +541,41 @@ public class IndexingItemBuilder {
       acl.applyTo(item);
     }
     ItemMetadata metadata = new ItemMetadata();
-    if (Strings.isNullOrEmpty(objectType)) {
-      configObjectType.ifPresent(this::setObjectType);
-    }
-    if (!Strings.isNullOrEmpty(objectType)) {
-      metadata.setObjectType(objectType);
-      ItemStructuredData structuredData =
-          new ItemStructuredData().setObject(StructuredData.getStructuredData(objectType, values));
-      item.setStructuredData(structuredData);
-    }
-    if (!Strings.isNullOrEmpty(mimeType)) {
-      metadata.setMimeType(mimeType);
-    }
-    String itemTitle = getSingleValue(title, configTitle,
-        values, StructuredData.STRING_CONVERTER, Strings::isNullOrEmpty);
-    if (!Strings.isNullOrEmpty(itemTitle)) {
-      metadata.setTitle(itemTitle);
-    }
-    String itemUrl = getSingleValue(url, configUrl,
-        values, StructuredData.STRING_CONVERTER, Strings::isNullOrEmpty);
-    if (!Strings.isNullOrEmpty(itemUrl)) {
-      metadata.setSourceRepositoryUrl(itemUrl);
-    }
-    if (!Strings.isNullOrEmpty(container)) {
-      metadata.setContainerName(container);
-    }
-    String contentLanguage = getSingleValue(language, configLanguage,
-        values, StructuredData.STRING_CONVERTER, Strings::isNullOrEmpty);
-    if (!Strings.isNullOrEmpty(contentLanguage)) {
-      metadata.setContentLanguage(contentLanguage);
-    }
-    DateTime itemUpdateTime = getSingleValue(updateTime, configUpdateTime,
-        values, StructuredData.DATETIME_CONVERTER, Objects::isNull);
-    if (itemUpdateTime != null) {
-      metadata.setUpdateTime(itemUpdateTime.toStringRfc3339());
-    }
-    DateTime itemCreateTime = getSingleValue(createTime, configCreateTime,
-        values, StructuredData.DATETIME_CONVERTER, Objects::isNull);
-    if (itemCreateTime != null) {
-      metadata.setCreateTime(itemCreateTime.toStringRfc3339());
-    }
-    if (!Strings.isNullOrEmpty(hash)) {
-      metadata.setHash(hash);
-    }
+    setFromFieldOrValues(objectType, configObjectType, values, StructuredData.STRING_CONVERTER,
+        Strings::isNullOrEmpty, Function.identity(),
+        itemObjectType -> {
+          metadata.setObjectType(itemObjectType);
+          item.setStructuredData(
+              new ItemStructuredData().setObject(
+                  StructuredData.getStructuredData(itemObjectType, values)));
+        });
+    setFromFieldOrValues(mimeType, configMimeType, values, StructuredData.STRING_CONVERTER,
+        Strings::isNullOrEmpty, Function.identity(), metadata::setMimeType);
+    setFromFieldOrValues(title, configTitle, values, StructuredData.STRING_CONVERTER,
+        Strings::isNullOrEmpty, Function.identity(), metadata::setTitle);
+    setFromFieldOrValues(url, configUrl, values, StructuredData.STRING_CONVERTER,
+        Strings::isNullOrEmpty, Function.identity(), metadata::setSourceRepositoryUrl);
+    setFromFieldOrValues(language, configLanguage, values, StructuredData.STRING_CONVERTER,
+        Strings::isNullOrEmpty, Function.identity(), metadata::setContentLanguage);
+    setFromFieldOrValues(updateTime, configUpdateTime, values, StructuredData.DATETIME_CONVERTER,
+        Objects::isNull, DateTime::toStringRfc3339, metadata::setUpdateTime);
+    setFromFieldOrValues(createTime, configCreateTime, values, StructuredData.DATETIME_CONVERTER,
+        Objects::isNull, DateTime::toStringRfc3339, metadata::setCreateTime);
+    setFromFieldOrValues(hash, configHash, values, StructuredData.STRING_CONVERTER,
+        Strings::isNullOrEmpty, Function.identity(), metadata::setHash);
+    setFromFieldOrValues(containerName, configContainerName, values,
+        StructuredData.STRING_CONVERTER, Strings::isNullOrEmpty, Function.identity(),
+        metadata::setContainerName);
     if (searchQuality != null) {
       metadata.setSearchQualityMetadata(searchQuality);
+    } else {
+      SearchQualityMetadata searchQualityMetadata = new SearchQualityMetadata();
+      setFromFieldOrValues(searchQualityMetadataQuality, configSearchQualityMetadataQuality,
+          values, StructuredData.DOUBLE_CONVERTER, Objects::isNull, Function.identity(),
+          searchQualityMetadata::setQuality);
+      if (searchQualityMetadata.getQuality() != null) {
+        metadata.setSearchQualityMetadata(searchQualityMetadata);
+      }
     }
     if (version != null) {
       item.encodeVersion(version);
@@ -477,21 +595,30 @@ public class IndexingItemBuilder {
 
   /**
    * Gets the first value from the primary (nullable) or backup (optional) FieldOrValue
-   * instances.
+   * instances, extracts non-empty values, and passes them to the given ItemMetadata setter.
    *
+   * @param <T> the field type in this class
+   * @param <M> the field type in the API model, usually String
    * @param primary the FieldOrValue from the setter
    * @param backup the FieldOrValue from the configuration
    * @param values the multimap used to resolve field name references
    * @param converter the converter for multimap values
    * @param isEmpty a predicate to check whether a value is present or missing
    */
-  private static <T> T getSingleValue(FieldOrValue<T> primary, Optional<FieldOrValue<T>> backup,
-      Multimap<String, Object> values, Converter<Object, T> converter, Predicate<T> isEmpty) {
+  private static <T, M> void setFromFieldOrValues(FieldOrValue<T> primary,
+      Optional<FieldOrValue<T>> backup,
+      Multimap<String, Object> values,
+      Converter<Object, T> converter,
+      Predicate<T> isEmpty,
+      Function<T, M> extractor,
+      Consumer<M> setter) {
     T value = getSingleValue(primary, values, converter);
     if (isEmpty.test(value) && backup.isPresent()) {
       value = getSingleValue(backup.get(), values, converter);
     }
-    return value;
+    if (!isEmpty.test(value)) {
+      setter.accept(extractor.apply(value));
+    }
   }
 
   private static <T> T getSingleValue(
@@ -584,6 +711,22 @@ public class IndexingItemBuilder {
       Configuration.Parser<T> parser) {
     String field = Configuration.getString(dotField(configKey), "").get();
     String value = Configuration.getString(dotValue(configKey), "").get();
+    return fieldOrValue(configKey, field, value, parser);
+  }
+
+  /**
+   * Constructs a {@link FieldOrValue} instance for the given {@code configKey},
+   * trying first the given field and if that is not does not exist,
+   * or has an empty value, the given default value.
+   *
+   * @param configKey a configuration key prefix, for example, {@code "itemMetadata.title"}
+   * @param field the key to lookup from {@link IndexingItemBuilder#setValues}
+   * @param value the default value
+   * @param parser a configuration {@link Parser} of the appropriate type, for example,
+   *     {@code String} or {@code DateTime}
+   */
+  private static <T> Optional<FieldOrValue<T>> fieldOrValue(String configKey, String field,
+      String value, Configuration.Parser<T> parser) {
     if (field.isEmpty()) {
       if (value.isEmpty()) {
         return Optional.empty();
@@ -615,12 +758,21 @@ public class IndexingItemBuilder {
 
   /** Mutable holder of configurable defaults. */
   static class ConfigDefaults {
+    private Optional<FieldOrValue<String>> mimeType = Optional.empty();
     private Optional<FieldOrValue<String>> title = Optional.empty();
     private Optional<FieldOrValue<String>> url = Optional.empty();
     private Optional<FieldOrValue<DateTime>> updateTime = Optional.empty();
     private Optional<FieldOrValue<DateTime>> createTime = Optional.empty();
     private Optional<FieldOrValue<String>> language = Optional.empty();
-    private Optional<String> objectType = Optional.empty();
+    private Optional<FieldOrValue<String>> hash = Optional.empty();
+    private Optional<FieldOrValue<String>> containerName = Optional.empty();
+    private Optional<FieldOrValue<Double>> searchQualityMetadataQuality = Optional.empty();
+    private Optional<FieldOrValue<String>> objectType = Optional.empty();
+
+    public ConfigDefaults setMimeType(Optional<FieldOrValue<String>> mimeType) {
+      this.mimeType = mimeType;
+      return this;
+    }
 
     public ConfigDefaults setTitle(Optional<FieldOrValue<String>> title) {
       this.title = title;
@@ -647,7 +799,22 @@ public class IndexingItemBuilder {
       return this;
     }
 
-    public ConfigDefaults setObjectType(Optional<String> objectType) {
+    public ConfigDefaults setHash(Optional<FieldOrValue<String>> hash) {
+      this.hash = hash;
+      return this;
+    }
+
+    public ConfigDefaults setContainerName(Optional<FieldOrValue<String>> containerName) {
+      this.containerName = containerName;
+      return this;
+    }
+
+    public ConfigDefaults setSearchQualityMetadataQuality(Optional<FieldOrValue<Double>> quality) {
+      this.searchQualityMetadataQuality = quality;
+      return this;
+    }
+
+    public ConfigDefaults setObjectType(Optional<FieldOrValue<String>> objectType) {
       this.objectType = objectType;
       return this;
     }

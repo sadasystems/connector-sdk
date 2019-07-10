@@ -3,10 +3,14 @@ package com.google.enterprise.cloudsearch.sdk.indexing.util;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.startsWith;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeThat;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.googleapis.testing.auth.oauth2.MockGoogleCredential;
@@ -18,12 +22,24 @@ import com.google.api.client.json.jackson2.JacksonFactory;
 import com.google.api.client.testing.http.MockHttpTransport;
 import com.google.api.client.testing.http.MockLowLevelHttpRequest;
 import com.google.api.client.testing.http.MockLowLevelHttpResponse;
+import com.google.api.services.cloudsearch.v1.CloudSearch.Indexing.Datasources;
+import com.google.api.services.cloudsearch.v1.CloudSearch.Indexing.Datasources.Items;
+import com.google.api.services.cloudsearch.v1.CloudSearch.Settings;
+import com.google.api.services.cloudsearch.v1.CloudSearchRequest;
+import com.google.api.services.cloudsearch.v1.model.DeleteQueueItemsRequest;
+import com.google.api.services.cloudsearch.v1.model.IndexItemOptions;
+import com.google.api.services.cloudsearch.v1.model.IndexItemRequest;
 import com.google.api.services.cloudsearch.v1.model.Item;
 import com.google.api.services.cloudsearch.v1.model.Operation;
+import com.google.api.services.cloudsearch.v1.model.PollItemsRequest;
 import com.google.api.services.cloudsearch.v1.model.PushItem;
+import com.google.api.services.cloudsearch.v1.model.PushItemRequest;
 import com.google.api.services.cloudsearch.v1.model.Schema;
+import com.google.api.services.cloudsearch.v1.model.UnreserveItemsRequest;
+import com.google.api.services.cloudsearch.v1.model.UpdateSchemaRequest;
 import com.google.common.io.CharStreams;
 import com.google.enterprise.cloudsearch.sdk.CredentialFactory;
+import com.google.enterprise.cloudsearch.sdk.indexing.IndexingService.RequestMode;
 import com.google.enterprise.cloudsearch.sdk.indexing.util.Uploader.UploaderHelper;
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -37,19 +53,23 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
+import junitparams.JUnitParamsRunner;
+import junitparams.Parameters;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 /**
  * Tests the {@link Uploader} utility.
  */
-@RunWith(MockitoJUnitRunner.class)
+@RunWith(JUnitParamsRunner.class)
 public class UploaderTest {
   private static final JsonFactory JSON_FACTORY = JacksonFactory.getDefaultInstance();
   private static final CredentialFactory CREDENTIAL_FACTORY =
@@ -60,6 +80,7 @@ public class UploaderTest {
               .build();
   private static final Path SERVICE_ACCOUNT_FILE_PATH = Paths.get("./service_account.json");
 
+  @Rule public MockitoRule rule = MockitoJUnit.rule();
   @Rule public TemporaryFolder tempFolder = new TemporaryFolder();
   @Rule public ExpectedException thrown = ExpectedException.none();
 
@@ -73,7 +94,8 @@ public class UploaderTest {
   }
 
   @Test
-  public void testDeleteItem() throws Exception {
+  @Parameters({"true", "false"})
+  public void deleteItem(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -83,16 +105,22 @@ public class UploaderTest {
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
                         + "datasources/ds1/items/item1";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 assertEquals("DELETE", method);
                 return buildApiRequest(200, new Operation());
               }
             });
-    Uploader uploader =
+
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.DeleteRequest deleteRequest = new UploadRequest.DeleteRequest();
@@ -100,10 +128,67 @@ public class UploaderTest {
     assertEquals("item1", deleteRequest.getName());
     uploadRequest.requests = Collections.singletonList(deleteRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.Delete delete = (Items.Delete) captor.getValue();
+    assertEquals(enableDebugging, delete.getDebugOptionsEnableDebugging());
+    assertEquals("testConnectorName", delete.getConnectorName());
+    assertEquals(RequestMode.SYNCHRONOUS.name(), delete.getMode());
+    assertNotNull(delete.getVersion());
   }
 
   @Test
-  public void testGetItem() throws Exception {
+  @Parameters({"true", "false"})
+  public void deleteQueueItems(boolean enableDebugging) throws Exception {
+    when(uploaderHelper.createTransport())
+        .thenReturn(
+            new MockHttpTransport() {
+              @Override
+              public MockLowLevelHttpRequest buildRequest(String method, String url)
+                  throws IOException {
+                String expectedUrl =
+                    "https://cloudsearch.googleapis.com/v1/indexing/"
+                        + "datasources/ds1/items:deleteQueueItems";
+                assertThat(url, startsWith(expectedUrl));
+                assertEquals("POST", method);
+                return buildApiRequest(200, new Operation());
+              }
+            });
+    Uploader uploader = spy(
+        new Uploader.Builder()
+            .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
+            .setUploaderHelper(uploaderHelper)
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
+    UploadRequest uploadRequest = new UploadRequest();
+    uploadRequest.sourceId = "ds1";
+    UploadRequest.DeleteQueueItemsRequest deleteQueueItemsRequest =
+        new UploadRequest.DeleteQueueItemsRequest();
+    deleteQueueItemsRequest.queue = "testQueue";
+    assertEquals("testQueue", deleteQueueItemsRequest.getName());
+    uploadRequest.requests = Collections.singletonList(deleteQueueItemsRequest);
+    uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.DeleteQueueItems deleteQueueItems = (Items.DeleteQueueItems) captor.getValue();
+    DeleteQueueItemsRequest dqiRequest =
+        (DeleteQueueItemsRequest) deleteQueueItems.getJsonContent();
+    assertEquals(enableDebugging, dqiRequest.getDebugOptions().getEnableDebugging());
+    assertEquals("testConnectorName", dqiRequest.getConnectorName());
+    assertEquals("testQueue", dqiRequest.getQueue());
+  }
+
+  @Test
+  @Parameters({"true", "false"})
+  public void getItem(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -113,51 +198,84 @@ public class UploaderTest {
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
                         + "datasources/ds1/items/item1";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 assertEquals("GET", method);
                 return buildApiRequest(200, new Item());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.GetRequest getRequest = new UploadRequest.GetRequest();
     getRequest.name = "item1";
     uploadRequest.requests = Collections.singletonList(getRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.Get get = (Items.Get) captor.getValue();
+    assertEquals(enableDebugging, get.getDebugOptionsEnableDebugging());
+    assertEquals("testConnectorName", get.getConnectorName());
   }
 
   @Test
-  public void testPushItem() throws Exception {
+  @Parameters({"true", "false"})
+  public void pushItem(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
               @Override
               public MockLowLevelHttpRequest buildRequest(String method, String url)
                   throws IOException {
+                String expectedUrl = "https://cloudsearch.googleapis.com/v1/indexing/"
+                    + "datasources/ds1/items/item1:push";
+                assertThat(url, startsWith(expectedUrl));
+                assertEquals("POST", method);
                 return buildApiRequest(200, new Item());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.PushItemRequest pushRequest = new UploadRequest.PushItemRequest();
     pushRequest.name = "item1";
-    pushRequest.pushItem = new PushItem();
+    pushRequest.pushItem = new PushItem().setQueue("testQueue");
     uploadRequest.requests = Collections.singletonList(pushRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.Push push = (Items.Push) captor.getValue();
+    PushItemRequest pushItemRequest = (PushItemRequest) push.getJsonContent();
+    assertEquals(enableDebugging, pushItemRequest.getDebugOptions().getEnableDebugging());
+    assertEquals("testConnectorName", pushItemRequest.getConnectorName());
+    PushItem item = pushItemRequest.getItem();
+    assertEquals("testQueue", item.getQueue());
   }
 
   @Test
-  public void testUnreserve() throws Exception {
+  @Parameters({"true", "false"})
+  public void unreserve(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -168,15 +286,19 @@ public class UploaderTest {
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
                         + "datasources/ds1/items:unreserve";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Operation());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.UnreserveRequest unreserveRequest = new UploadRequest.UnreserveRequest();
@@ -184,10 +306,22 @@ public class UploaderTest {
     assertEquals("default", unreserveRequest.getName());
     uploadRequest.requests = Collections.singletonList(unreserveRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.Unreserve unreserve = (Items.Unreserve) captor.getValue();
+    assertEquals("datasources/ds1", unreserve.getName());
+    UnreserveItemsRequest unreserveItemsRequest =
+        (UnreserveItemsRequest) unreserve.getJsonContent();
+    assertEquals(enableDebugging, unreserveItemsRequest.getDebugOptions().getEnableDebugging());
+    assertEquals("testConnectorName", unreserveItemsRequest.getConnectorName());
+    assertEquals("default", unreserveItemsRequest.getQueue());
   }
 
   @Test
-  public void testGetSchema() throws Exception {
+  @Parameters({"true", "false"})
+  public void getSchema(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -197,25 +331,37 @@ public class UploaderTest {
                 assertEquals("GET", method);
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/datasources/ds1/schema";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Schema());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.GetSchemaRequest getRequest = new UploadRequest.GetSchemaRequest();
     assertEquals("default", getRequest.getName());
     uploadRequest.requests = Collections.singletonList(getRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Datasources.GetSchema getSchema = (Datasources.GetSchema) captor.getValue();
+    assertEquals(enableDebugging, getSchema.getDebugOptionsEnableDebugging());
   }
 
   @Test
-  public void testDeleteSchema() throws Exception {
+  @Parameters({"true", "false"})
+  public void deleteSchema(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -225,25 +371,37 @@ public class UploaderTest {
                 assertEquals("DELETE", method);
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/datasources/ds1/schema";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Schema());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.DeleteSchemaRequest getRequest = new UploadRequest.DeleteSchemaRequest();
     assertEquals("default", getRequest.getName());
     uploadRequest.requests = Collections.singletonList(getRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Datasources.DeleteSchema deleteSchema = (Datasources.DeleteSchema) captor.getValue();
+    assertEquals(enableDebugging, deleteSchema.getDebugOptionsEnableDebugging());
   }
 
   @Test
-  public void testUpdateSchema() throws Exception {
+  @Parameters({"true", "false"})
+  public void updateSchema(boolean enableDebugging) throws Exception {
     File schemaFile = tempFolder.newFile("schema.json");
     try (FileOutputStream outputStream =
         new FileOutputStream(
@@ -262,24 +420,39 @@ public class UploaderTest {
                 assertEquals("PUT", method);
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/datasources/ds1/schema";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Operation());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
             .setBaseUri(tempFolder.getRoot().toURI())
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.UpdateSchemaRequest updateRequest = new UploadRequest.UpdateSchemaRequest();
     // special processing for windows file paths
     updateRequest.schemaJsonFile = "file:///" + schemaFile.getAbsolutePath().replace("\\", "/");
+    updateRequest.validateOnly = true;
     assertEquals("default", updateRequest.getName());
     uploadRequest.requests = Collections.singletonList(updateRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Datasources.UpdateSchema updateSchema = (Datasources.UpdateSchema) captor.getValue();
+    UpdateSchemaRequest updateSchemaRequest = (UpdateSchemaRequest) updateSchema.getJsonContent();
+    assertEquals(enableDebugging, updateSchemaRequest.getDebugOptions().getEnableDebugging());
+    assertTrue(updateSchemaRequest.getValidateOnly());
+    assertNotNull(updateSchemaRequest.getSchema());
   }
 
   @Test
@@ -317,7 +490,8 @@ public class UploaderTest {
   }
 
   @Test
-  public void testIndexItem() throws Exception {
+  @Parameters({"true", "false"})
+  public void indexItem(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -328,26 +502,45 @@ public class UploaderTest {
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
                         + "datasources/ds1/items/item1:index";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Operation());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.IndexItemRequest indexRequest = new UploadRequest.IndexItemRequest();
     indexRequest.item = new Item().setName("item1");
+    indexRequest.indexItemOptions = new IndexItemOptions().setAllowUnknownGsuitePrincipals(true);
     indexRequest.isIncremental = true;
     uploadRequest.requests = Collections.singletonList(indexRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.Index index = (Items.Index) captor.getValue();
+    IndexItemRequest indexItemRequest = (IndexItemRequest) index.getJsonContent();
+    assertEquals(enableDebugging, indexItemRequest.getDebugOptions().getEnableDebugging());
+    assertEquals("testConnectorName", indexItemRequest.getConnectorName());
+    assertNotNull(indexItemRequest.getItem());
+    assertNotNull(indexItemRequest.getItem().decodeVersion());
+    assertEquals(RequestMode.SYNCHRONOUS.name(), indexItemRequest.getMode());
+    assertTrue(indexItemRequest.getIndexItemOptions().getAllowUnknownGsuitePrincipals());
   }
 
   @Test
-  public void testIndexItemAndContent() throws Exception {
+  @Parameters({"true", "false"})
+  public void indexItemAndContent(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -358,15 +551,20 @@ public class UploaderTest {
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
                         + "datasources/ds1/items/item1:index";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Operation());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.MediaContent mediaContent = new UploadRequest.MediaContent();
@@ -379,6 +577,18 @@ public class UploaderTest {
     indexRequest.mediaContent = mediaContent;
     uploadRequest.requests = Collections.singletonList(indexRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.Index index = (Items.Index) captor.getValue();
+    IndexItemRequest indexItemRequest = (IndexItemRequest) index.getJsonContent();
+    assertEquals(enableDebugging, indexItemRequest.getDebugOptions().getEnableDebugging());
+    assertEquals("testConnectorName", indexItemRequest.getConnectorName());
+    assertNotNull(indexItemRequest.getItem());
+    assertNotNull(indexItemRequest.getItem().decodeVersion());
+    assertNotNull(indexItemRequest.getItem().getContent());
+    assertEquals(RequestMode.SYNCHRONOUS.name(), indexItemRequest.getMode());
   }
 
   @Test
@@ -393,7 +603,7 @@ public class UploaderTest {
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
                         + "datasources/ds1/items/item1:index";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Operation());
               }
             });
@@ -434,7 +644,8 @@ public class UploaderTest {
   }
 
   @Test
-  public void testPollItems() throws Exception {
+  @Parameters({"true", "false"})
+  public void pollItems(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -445,15 +656,20 @@ public class UploaderTest {
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
                         + "datasources/ds1/items:poll";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Operation());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.PollItemsRequest pollRequest = new UploadRequest.PollItemsRequest();
@@ -463,10 +679,22 @@ public class UploaderTest {
     assertEquals(Collections.singletonList("MODIFIED").toString(), pollRequest.getName());
     uploadRequest.requests = Collections.singletonList(pollRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.Poll poll = (Items.Poll) captor.getValue();
+    PollItemsRequest pollItemsRequest = (PollItemsRequest) poll.getJsonContent();
+    assertEquals(enableDebugging, pollItemsRequest.getDebugOptions().getEnableDebugging());
+    assertEquals("testConnectorName", pollItemsRequest.getConnectorName());
+    assertEquals(Integer.valueOf(10), pollItemsRequest.getLimit());
+    assertEquals("default", pollItemsRequest.getQueue());
+    assertEquals(Collections.singletonList("MODIFIED"), pollItemsRequest.getStatusCodes());
   }
 
   @Test
-  public void testListItems() throws Exception {
+  @Parameters({"true", "false"})
+  public void listItems(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -476,27 +704,43 @@ public class UploaderTest {
                 assertEquals("GET", method);
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
-                        + "datasources/ds1/items?pageSize=10";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                        + "datasources/ds1/items";
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Operation());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.ListRequest listRequest = new UploadRequest.ListRequest();
     listRequest.pageSize = 10;
+    listRequest.brief = true;
     assertEquals("default pageToken", listRequest.getName());
     uploadRequest.requests = Collections.singletonList(listRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Items.List list = (Items.List) captor.getValue();
+    assertEquals(enableDebugging, list.getDebugOptionsEnableDebugging());
+    assertEquals("testConnectorName", list.getConnectorName());
+    assertEquals(Integer.valueOf(10), list.getPageSize());
+    assertEquals(true, list.getBrief());
   }
 
   @Test
-  public void testDatasourcesList() throws Exception {
+  @Parameters({"true", "false"})
+  public void datasourcesList(boolean enableDebugging) throws Exception {
     when(uploaderHelper.createTransport())
         .thenReturn(
             new MockHttpTransport() {
@@ -506,21 +750,36 @@ public class UploaderTest {
                 assertEquals("GET", method);
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/settings/datasources";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 return buildApiRequest(200, new Operation());
               }
             });
-    Uploader uploader =
+    Uploader uploader = spy(
         new Uploader.Builder()
             .setServiceAccountKeyFilePath(SERVICE_ACCOUNT_FILE_PATH)
             .setUploaderHelper(uploaderHelper)
-            .build();
+            .setEnableDebugging(enableDebugging)
+            .setConnectorName("testConnectorName")
+            .build());
+    Uploader.Visitor visitor = spy(uploader.new Visitor("ds1"));
+    when(uploader.getVisitor("ds1")).thenReturn(visitor);
+
     UploadRequest uploadRequest = new UploadRequest();
     uploadRequest.sourceId = "ds1";
     UploadRequest.DatasourcesListRequest listRequest = new UploadRequest.DatasourcesListRequest();
+    listRequest.pageToken = "token";
+    listRequest.pageSize = 11;
     assertEquals("default", listRequest.getName());
     uploadRequest.requests = Collections.singletonList(listRequest);
     uploader.execute(uploadRequest);
+
+    ArgumentCaptor<CloudSearchRequest<?>> captor =
+        ArgumentCaptor.forClass(CloudSearchRequest.class);
+    verify(visitor).execute(captor.capture());
+    Settings.Datasources.List list = (Settings.Datasources.List) captor.getValue();
+    assertEquals(enableDebugging, list.getDebugOptionsEnableDebugging());
+    assertEquals(Integer.valueOf(11), list.getPageSize());
+    assertEquals("token", list.getPageToken());
   }
 
   @Test
@@ -715,7 +974,7 @@ public class UploaderTest {
                 String expectedUrl =
                     "https://cloudsearch.googleapis.com/v1/indexing/"
                         + "datasources/ds1/items/item1";
-                assertTrue(url + " not starting with " + expectedUrl, url.startsWith(expectedUrl));
+                assertThat(url, startsWith(expectedUrl));
                 assertEquals("DELETE", method);
                 return buildApiRequest(200, new Operation());
               }

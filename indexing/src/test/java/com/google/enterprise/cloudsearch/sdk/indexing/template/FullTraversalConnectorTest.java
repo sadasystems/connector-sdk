@@ -17,17 +17,18 @@ package com.google.enterprise.cloudsearch.sdk.indexing.template;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.hasItem;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -208,8 +209,7 @@ public class FullTraversalConnectorTest {
     setConfig("ignore", DefaultAclChoices.PUBLIC);
     FullTraversalConnector connector = new FullTraversalConnector(repositoryMock);
     connector.init(connectorContextMock);
-    verify(repositoryMock, times(1)).
-        init(repositoryContextCaptor.capture());
+    verify(repositoryMock).init(repositoryContextCaptor.capture());
     RepositoryContext rc = repositoryContextCaptor.getAllValues().get(0);
     // This will throw an IllegalArgumentException if the connector wasn't registered.
     rc.getEventBus().unregister(connector);
@@ -226,8 +226,7 @@ public class FullTraversalConnectorTest {
     when(indexingServiceMock.indexItem(any(), any())).thenReturn(updateFuture);
     FullTraversalConnector connector = new FullTraversalConnector(repositoryMock);
     connector.init(connectorContextMock);
-    verify(repositoryMock, times(1)).
-        init(repositoryContextCaptor.capture());
+    verify(repositoryMock).init(repositoryContextCaptor.capture());
     RepositoryContext rc = repositoryContextCaptor.getAllValues().get(0);
     assertEquals(DefaultAclMode.OVERRIDE, rc.getDefaultAclMode());
   }
@@ -244,8 +243,8 @@ public class FullTraversalConnectorTest {
     connector.handleAsyncOperation(deleteAsyncOperation);
     connector.destroy();
     assertNotNull(deleteAsyncOperation.getResult().get());
-    verify(errorOperation, times(1)).execute(indexingServiceMock);
-    verify(successOperation, times(1)).execute(indexingServiceMock);
+    verify(errorOperation).execute(indexingServiceMock);
+    verify(successOperation).execute(indexingServiceMock);
     thrown.expect(ExecutionException.class);
     pushAsyncOperation.getResult().get();
   }
@@ -311,13 +310,13 @@ public class FullTraversalConnectorTest {
             eq(ContentFormat.HTML),
             eq(RequestMode.SYNCHRONOUS));
     // cannot manage the order of updateItemAndContent and delete id
-    verify(indexingServiceMock, times(1))
+    verify(indexingServiceMock)
         .deleteItem("delete id", "myVersion".getBytes(), RequestMode.SYNCHRONOUS);
     List<Item> allItems = itemListCaptor.getAllValues();
     List<ByteArrayContent> allContent = contentCaptor.getAllValues();
     assertEquals(allItems.size(), numberOfItems);
     for (int i = 0; i < numberOfItems; i++) {
-      assertTrue(targetItems.containsKey(allItems.get(i).getName())); // verify item
+      assertThat(targetItems.keySet(), hasItem(allItems.get(i).getName())); // verify item
       assertEquals(QUEUE_A, allItems.get(i).getQueue());
       String html =
           CharStreams.toString(
@@ -326,7 +325,7 @@ public class FullTraversalConnectorTest {
       assertEquals(DOMAIN_PUBLIC_ACL, allItems.get(i).getAcl());
     }
     // closable iterable closed
-    verify(opIterableSpy, times(1)).close();
+    verify(opIterableSpy).close();
     verify(indexingServiceMock).deleteQueueItems(QUEUE_B);
   }
 
@@ -396,12 +395,12 @@ public class FullTraversalConnectorTest {
             eq(null),
             eq(ContentFormat.HTML),
             eq(RequestMode.SYNCHRONOUS));
-    verify(indexingServiceMock, times(1)).deleteItem("delete id", null, RequestMode.UNSPECIFIED);
+    verify(indexingServiceMock).deleteItem("delete id", null, RequestMode.UNSPECIFIED);
     List<Item> allItems = itemListCaptor.getAllValues();
     List<ByteArrayContent> allContent = contentCaptor.getAllValues();
     assertEquals(allItems.size(), numberOfItems);
     for (int i = 0; i < numberOfItems; i++) {
-      assertTrue(targetItems.containsKey(allItems.get(i).getName())); // verify item
+      assertThat(targetItems.keySet(), hasItem(allItems.get(i).getName())); // verify item
       assertEquals(null, allItems.get(i).getMetadata().getContainerName()); // no container
       String html =
           CharStreams.toString(
@@ -410,7 +409,7 @@ public class FullTraversalConnectorTest {
       assertEquals(DOMAIN_PUBLIC_ACL, allItems.get(i).getAcl());
     }
     // closable iterable closed
-    verify(opIterableSpy, times(1)).close();
+    verify(opIterableSpy).close();
     verify(indexingServiceMock).deleteQueueItems(QUEUE_B);
     verifyNoMoreInteractions(indexingServiceMock);
   }
@@ -486,7 +485,7 @@ public class FullTraversalConnectorTest {
     List<ByteArrayContent> allContent = contentCaptor.getAllValues();
     assertEquals(allItems.size(), numberOfItems);
     for (int i = 0; i < numberOfItems; i++) {
-      assertTrue(targetItems.containsKey(allItems.get(i).getName())); // verify item
+      assertThat(targetItems.keySet(), hasItem(allItems.get(i).getName())); // verify item
       String html =
           CharStreams.toString(
               new InputStreamReader(allContent.get(i).getInputStream(), UTF_8));
@@ -668,7 +667,7 @@ public class FullTraversalConnectorTest {
     when(indexingServiceMock.deleteQueueItems(any())).thenReturn(deleteQueueFuture);
 
     connector.traverse();
-    verify(opIterableSpy, times(1)).close();
+    verify(opIterableSpy).close();
     verify(indexingServiceMock, times(10))
         .indexItemAndContent(any(), any(), any(), eq(ContentFormat.HTML), any());
   }
@@ -864,9 +863,9 @@ public class FullTraversalConnectorTest {
     // verify
     InOrder inOrderCheck = inOrder(indexingServiceMock, checkpointHandlerMock);
     // one get for the check point entry
-    inOrderCheck.verify(checkpointHandlerMock, times(1))
+    inOrderCheck.verify(checkpointHandlerMock)
         .readCheckpoint(FullTraversalConnector.CHECKPOINT_QUEUE);
-    inOrderCheck.verify(checkpointHandlerMock, times(1))
+    inOrderCheck.verify(checkpointHandlerMock)
         .readCheckpoint(FullTraversalConnector.CHECKPOINT_INCREMENTAL);
     // one update item with content for each of five targetItems in the db
     inOrderCheck
@@ -878,15 +877,15 @@ public class FullTraversalConnectorTest {
             eq(ContentFormat.HTML),
             eq(RequestMode.SYNCHRONOUS));
     // one delete operation
-    verify(indexingServiceMock, times(1)).deleteItem("delete id", null, RequestMode.UNSPECIFIED);
-    inOrderCheck.verify(checkpointHandlerMock, times(1))
+    verify(indexingServiceMock).deleteItem("delete id", null, RequestMode.UNSPECIFIED);
+    inOrderCheck.verify(checkpointHandlerMock)
         .saveCheckpoint(FullTraversalConnector.CHECKPOINT_INCREMENTAL, newPayload);
     // verify objects in parameters
     List<Item> allItems = itemListCaptor.getAllValues();
     List<ByteArrayContent> allContent = contentCaptor.getAllValues();
     assertEquals(allItems.size(), numberOfItems);
     for (int i = 0; i < numberOfItems; i++) {
-      assertTrue(targetItems.containsKey(allItems.get(i).getName())); // verify item
+      assertThat(targetItems.keySet(), hasItem(allItems.get(i).getName())); // verify item
       String html =
           CharStreams.toString(
               new InputStreamReader(allContent.get(i).getInputStream(), UTF_8));
@@ -942,9 +941,9 @@ public class FullTraversalConnectorTest {
     // verify
     InOrder inOrderCheck = inOrder(indexingServiceMock, checkpointHandlerMock);
     // one get for the check point entry
-    inOrderCheck.verify(checkpointHandlerMock, times(1))
+    inOrderCheck.verify(checkpointHandlerMock)
         .readCheckpoint(FullTraversalConnector.CHECKPOINT_QUEUE);
-    inOrderCheck.verify(checkpointHandlerMock, times(1))
+    inOrderCheck.verify(checkpointHandlerMock)
         .readCheckpoint(FullTraversalConnector.CHECKPOINT_INCREMENTAL);
     // one update item with content
     verify(indexingServiceMock)
@@ -957,7 +956,7 @@ public class FullTraversalConnectorTest {
     verify(checkpointHandlerMock)
         .saveCheckpoint(FullTraversalConnector.CHECKPOINT_INCREMENTAL, null);
     assertEquals(item.getName(), itemCaptor.getValue().getName());
-    assertTrue(itemCaptor.getValue().getAcl() == null);
+    assertNull(itemCaptor.getValue().getAcl());
     verifyNoMoreInteractions(indexingServiceMock, checkpointHandlerMock);
   }
 
@@ -979,9 +978,9 @@ public class FullTraversalConnectorTest {
 
     // verify
     InOrder inOrderCheck = inOrder(checkpointHandlerMock);
-    inOrderCheck.verify(checkpointHandlerMock, times(1))
+    inOrderCheck.verify(checkpointHandlerMock)
         .readCheckpoint(FullTraversalConnector.CHECKPOINT_QUEUE);
-    inOrderCheck.verify(checkpointHandlerMock, times(1))
+    inOrderCheck.verify(checkpointHandlerMock)
         .readCheckpoint(FullTraversalConnector.CHECKPOINT_INCREMENTAL);
     verifyNoMoreInteractions(checkpointHandlerMock);
   }
@@ -1115,9 +1114,8 @@ public class FullTraversalConnectorTest {
         new FullTraversalConnector(repositoryMock, checkpointHandlerMock);
     connector.init(connectorContextMock);
     connector.destroy();
-    verify(repositoryMock, times(1)).close();
-    verify(repositoryMock, times(1)).
-        init(repositoryContextCaptor.capture());
+    verify(repositoryMock).close();
+    verify(repositoryMock).init(repositoryContextCaptor.capture());
     RepositoryContext rc = repositoryContextCaptor.getAllValues().get(0);
     // This will throw an IllegalArgumentException if the connector is no longer registered.
     thrown.expect(IllegalArgumentException.class);
@@ -1130,9 +1128,9 @@ public class FullTraversalConnectorTest {
     FullTraversalConnector connector =
         new FullTraversalConnector(repositoryMock, checkpointHandlerMock);
     connector.init(connectorContextMock);
-    verify(repositoryMock, times(1)).init(any());
+    verify(repositoryMock).init(any());
     connector.destroy();
-    verify(repositoryMock, times(1)).close();
+    verify(repositoryMock).close();
   }
 
   @Test
@@ -1143,7 +1141,7 @@ public class FullTraversalConnectorTest {
       connector.init(connectorContextMock);
       fail();
     } catch (IllegalStateException ex) {
-      verify(repositoryMock, times(0)).init(any());
+      verify(repositoryMock, never()).init(any());
     }
   }
 
@@ -1173,7 +1171,7 @@ public class FullTraversalConnectorTest {
         new FullTraversalConnector(repositoryMock, checkpointHandlerMock);
     connector.init(connectorContextMock);
     assertEquals(QUEUE_A, connector.queueCheckpoint.getCurrentQueueName());
-    verify(checkpointHandlerMock, times(1))
+    verify(checkpointHandlerMock)
         .saveCheckpoint(FullTraversalConnector.CHECKPOINT_QUEUE, QUEUE_A_CHECKPOINT_BYTES);
   }
 
@@ -1187,7 +1185,7 @@ public class FullTraversalConnectorTest {
         new FullTraversalConnector(repositoryMock, checkpointHandlerMock);
     connector.init(connectorContextMock);
     assertEquals(QUEUE_B, connector.queueCheckpoint.getCurrentQueueName());
-    verify(checkpointHandlerMock, times(1)).readCheckpoint(FullTraversalConnector.CHECKPOINT_QUEUE);
+    verify(checkpointHandlerMock).readCheckpoint(FullTraversalConnector.CHECKPOINT_QUEUE);
     verifyNoMoreInteractions(checkpointHandlerMock);
   }
 
@@ -1248,17 +1246,40 @@ public class FullTraversalConnectorTest {
   }
 
   @Test
-  public void testTraverseWithPreviousDeleteQueueItems() throws Exception {
+  public void traverse_previousDeleteQueueItems_notDone() throws Exception {
     Operation deleteQueueItemsOperation = new Operation().setDone(false);
     when(indexingServiceMock.getOperation("nonempty")).thenReturn(deleteQueueItemsOperation);
     when(checkpointHandlerMock.readCheckpoint(FullTraversalConnector.CHECKPOINT_QUEUE))
         .thenReturn(new QueueCheckpoint.QueueData().setOperationName("nonempty").get());
 
     FullTraversalConnector connector = createConnector(/* useQueues */ true);
-    List<ApiOperation> docs1 = createRepositoryDocsAndResponses(3);
+    List<ApiOperation> docs = createRepositoryDocsAndResponses(3);
     connector.traverse();
 
-    verify(repositoryMock, times(0)).getAllDocs(null);
+    verify(repositoryMock, never()).getAllDocs(null);
+  }
+
+  @Test
+  public void traverse_previousDeleteQueueItems_done() throws Exception {
+    // Start of traversal checking delete queue operation.
+    Operation deleteQueueItemsOperation = new Operation().setDone(true);
+    when(indexingServiceMock.getOperation("nonempty")).thenReturn(deleteQueueItemsOperation);
+    when(checkpointHandlerMock.readCheckpoint(FullTraversalConnector.CHECKPOINT_QUEUE))
+        .thenReturn(new QueueCheckpoint.QueueData().setOperationName("nonempty").get());
+
+    // End of traversal running delete queue operation.
+    SettableFuture<Operation> deleteQueueFuture = SettableFuture.create();
+    deleteQueueFuture.set(new Operation().setDone(false).setName("deleteQueueItemsName"));
+    when(indexingServiceMock.deleteQueueItems(any())).thenReturn(deleteQueueFuture);
+
+    FullTraversalConnector connector = createConnector(/* useQueues */ true);
+    List<ApiOperation> docs = createRepositoryDocsAndResponses(3);
+    connector.traverse();
+
+    verify(repositoryMock).getAllDocs(null);
+    verifyQueueValue(docs, QUEUE_B);
+    verifyQueueCheckpointHandler(2, 3, QUEUE_B_CHECKPOINT_BYTES);
+    verify(indexingServiceMock).deleteQueueItems(QUEUE_A);
   }
 
   @Test
@@ -1269,7 +1290,7 @@ public class FullTraversalConnectorTest {
     connector.traverse();
     verifyQueueValue(docs, null);
     verifyQueueCheckpointHandler(0, 0, null);
-    verify(indexingServiceMock, times(0)).deleteQueueItems(any());
+    verify(indexingServiceMock, never()).deleteQueueItems(any());
   }
 
   @Test

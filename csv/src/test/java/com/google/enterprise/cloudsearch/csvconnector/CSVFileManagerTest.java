@@ -17,10 +17,12 @@ package com.google.enterprise.cloudsearch.csvconnector;
 
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static junit.framework.TestCase.assertEquals;
-import static junit.framework.TestCase.assertFalse;
-import static junit.framework.TestCase.assertTrue;
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.endsWith;
+import static org.hamcrest.CoreMatchers.hasItem;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertThat;
 
 import com.google.api.client.http.ByteArrayContent;
 import com.google.api.services.cloudsearch.v1.model.Item;
@@ -123,7 +125,7 @@ public class CSVFileManagerTest {
     setupConfig.initConfig(config);
 
     thrown.expect(InvalidConfigurationException.class);
-    thrown.expectMessage(containsString("csv file"));
+    thrown.expectMessage("File does not exist: csv.filePath=invalid/path/to/file.java");
     CSVFileManager.fromConfiguration();
   }
 
@@ -137,8 +139,7 @@ public class CSVFileManagerTest {
     setupConfig.initConfig(config);
 
     thrown.expect(InvalidConfigurationException.class);
-    thrown.expectMessage(containsString(
-        "csv file testNotExist.csv does not exists"));
+    thrown.expectMessage("File does not exist: csv.filePath=testNotExist.csv");
     CSVFileManager.fromConfiguration();
   }
 
@@ -376,8 +377,8 @@ public class CSVFileManagerTest {
     ByteArrayContent content = csvFileManager.createContent(csvRecord);
     String html = CharStreams
           .toString(new InputStreamReader(content.getInputStream(), UTF_8));
-    assertTrue(html.contains("moma search"));
-    assertTrue(html.contains("ID1"));
+    assertThat(html, containsString("moma search"));
+    assertThat(html, containsString("ID1"));
 
   }
 
@@ -446,15 +447,19 @@ public class CSVFileManagerTest {
     createFile(tmpfile, UTF_8, testCSVSingle);
     Properties config = new Properties();
     config.put(CSVFileManager.FILEPATH, tmpfile.getAbsolutePath());
-    config.put(UrlBuilder.CONFIG_COLUMNS, "title,Id");
+    config.put(UrlBuilder.CONFIG_COLUMNS, "title,id");
     config.put(CONTENT_TITLE, "title");
     config.put(CONTENT_HIGH, "title,description");
-    config.put(CSVFileManager.CSVCOLUMNS, "title, description, Id");
+    // Header in file is "term, definition, author"
+    config.put(CSVFileManager.CSVCOLUMNS, "title, description, id");
     config.put(CSVFileManager.SKIP_HEADER, "true");
     setupConfig.initConfig(config);
 
     CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
-    csvFileManager.getCSVFile();
+    CSVRecord csvRecord = getOnlyElement(csvFileManager.getCSVFile());
+    // The record should use the values from csvColumns
+    assertEquals(ImmutableSet.of("title", "description", "id"),
+        csvRecord.toMap().keySet());
   }
 
   @Test
@@ -469,10 +474,9 @@ public class CSVFileManagerTest {
     config.put(CSVFileManager.UNIQUE_KEY_COLUMNS, "title");
     setupConfig.initConfig(config);
 
-    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
     thrown.expect(InvalidConfigurationException.class);
     thrown.expectMessage(containsString("[title]"));
-    csvFileManager.getCSVFile();
+    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
   }
 
   @Test
@@ -487,11 +491,10 @@ public class CSVFileManagerTest {
     config.put(CSVFileManager.UNIQUE_KEY_COLUMNS, "TERM");
     setupConfig.initConfig(config);
 
-    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
     thrown.expect(InvalidConfigurationException.class);
     thrown.expectMessage(containsString(CSVFileManager.UNIQUE_KEY_COLUMNS));
     thrown.expectMessage(containsString("[TERM]"));
-    csvFileManager.getCSVFile();
+    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
   }
 
   @Test
@@ -506,11 +509,10 @@ public class CSVFileManagerTest {
     config.put(CSVFileManager.UNIQUE_KEY_COLUMNS, "term");
     setupConfig.initConfig(config);
 
-    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
     thrown.expect(InvalidConfigurationException.class);
     thrown.expectMessage(containsString(UrlBuilder.CONFIG_COLUMNS));
     thrown.expectMessage(containsString("[TERM]"));
-    csvFileManager.getCSVFile();
+    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
   }
 
   @Test
@@ -534,7 +536,7 @@ public class CSVFileManagerTest {
     String html = CharStreams
         .toString(new InputStreamReader(content.getInputStream(), UTF_8));
     //definition part has empty value
-    assertTrue(html.contains("<p>definition:</p>\n" + "  <h1></h1>"));
+    assertThat(html, containsString("<p>definition:</p>\n" + "  <h1></h1>"));
   }
 
   @Test
@@ -554,7 +556,7 @@ public class CSVFileManagerTest {
     CSVRecord csvRecord = getOnlyElement(csvFile);
 
     Multimap<String, Object> multimap = csvFileManager.generateMultiMap(csvRecord);
-    assertTrue(multimap.get("updated").size() == 2);
+    assertEquals(multimap.get("updated").toString(), 2, multimap.get("updated").size());
   }
 
   @Test
@@ -594,8 +596,117 @@ public class CSVFileManagerTest {
     CSVRecord csvRecord = getOnlyElement(csvFile);
 
     Multimap<String, Object> multimap = csvFileManager.generateMultiMap(csvRecord);
-    assertTrue(multimap.get("author").contains("ID1"));
-    assertTrue(multimap.get("author").contains("ID2,A"));
+    assertThat(multimap.get("author"), hasItem("ID1"));
+    assertThat(multimap.get("author"), hasItem("ID2,A"));
+  }
+
+  @Test
+  public void multiValueColumns_withCsvColumns_invalidColumnName_throwsException()
+      throws IOException {
+    File tmpfile = temporaryFolder.newFile("testMultiValueFields.csv");
+    createFile(tmpfile, UTF_8,
+        "term, synonyms",
+        "small, \"diminutive,little,slight\"");
+
+    Properties config = new Properties();
+    config.put(CSVFileManager.FILEPATH, tmpfile.getAbsolutePath());
+    config.put(CSVFileManager.CSVCOLUMNS, "term, synonyms");
+    config.put(UrlBuilder.CONFIG_COLUMNS, "term");
+    config.put(CONTENT_TITLE, "term");
+    config.put(CSVFileManager.MULTIVALUE_COLUMNS, "notAColumn");
+    setupConfig.initConfig(config);
+
+    thrown.expect(InvalidConfigurationException.class);
+    thrown.expectMessage(containsString(CSVFileManager.MULTIVALUE_COLUMNS));
+    thrown.expectMessage(containsString("[notAColumn]"));
+    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
+  }
+
+  @Test
+  public void multiValueColumns_noCsvColumns_invalidColumnName_throwsException()
+      throws IOException {
+    File tmpfile = temporaryFolder.newFile("testMultiValueFields.csv");
+    createFile(tmpfile, UTF_8,
+        "term, synonyms",
+        "small, \"diminutive,little,slight\"");
+    Properties config = new Properties();
+    config.put(CSVFileManager.FILEPATH, tmpfile.getAbsolutePath());
+    config.put(UrlBuilder.CONFIG_COLUMNS, "term");
+    config.put(CONTENT_TITLE, "term");
+    config.put(CSVFileManager.MULTIVALUE_COLUMNS, "notAColumn");
+    setupConfig.initConfig(config);
+
+    thrown.expect(InvalidConfigurationException.class);
+    thrown.expectMessage(containsString(CSVFileManager.MULTIVALUE_COLUMNS));
+    thrown.expectMessage(containsString("[notAColumn]"));
+    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
+  }
+
+  @Test
+  public void multiValueColumns_noMultiValueColumns_configuredDelimiterColumns_throwsException()
+      throws IOException {
+    File tmpfile = temporaryFolder.newFile("testMultiValueFields.csv");
+    createFile(tmpfile, UTF_8,
+        "term, synonyms",
+        "small, \"diminutive,little,slight\"");
+    Properties config = new Properties();
+    config.put(CSVFileManager.FILEPATH, tmpfile.getAbsolutePath());
+    config.put(CSVFileManager.CSVCOLUMNS, "term, synonyms");
+    config.put(UrlBuilder.CONFIG_COLUMNS, "term");
+    config.put(CONTENT_TITLE, "term");
+    // Don't configure multi-value columns; configured delimiters should fail
+    //config.put(CSVFileManager.MULTIVALUE_COLUMNS, "");
+    config.put("csv.multiValue.synonyms", "*");
+    setupConfig.initConfig(config);
+
+    thrown.expect(InvalidConfigurationException.class);
+    thrown.expectMessage(
+        "Multi-value separators are configured but no multi-value columns are configured");
+    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
+  }
+
+  @Test
+  public void multiValueColumns_withCsvColumns_invalidDelimiterColumnName_throwsException()
+      throws IOException {
+    File tmpfile = temporaryFolder.newFile("testMultiValueFields.csv");
+    createFile(tmpfile, UTF_8,
+        "term, synonyms",
+        "small, \"diminutive,little,slight\"");
+    Properties config = new Properties();
+    config.put(CSVFileManager.FILEPATH, tmpfile.getAbsolutePath());
+    config.put(CSVFileManager.CSVCOLUMNS, "term, synonyms");
+    config.put(UrlBuilder.CONFIG_COLUMNS, "term");
+    config.put(CONTENT_TITLE, "term");
+    config.put(CSVFileManager.MULTIVALUE_COLUMNS, "synonyms");
+    config.put("csv.multiValue.synonyms", "*");
+    config.put("csv.multiValue.notAColumn", "*");
+    setupConfig.initConfig(config);
+
+    thrown.expect(InvalidConfigurationException.class);
+    thrown.expectMessage(containsString("csv.multiValue.*"));
+    thrown.expectMessage(containsString("[notAColumn]"));
+    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
+  }
+
+  @Test
+  public void multiValueColumns_noCsvColumns_invalidDelimiterColumnName_throwsException()
+      throws IOException {
+    File tmpfile = temporaryFolder.newFile("testMultiValueFields.csv");
+    createFile(tmpfile, UTF_8,
+        "term, synonyms",
+        "small, \"diminutive,little,slight\"");
+    Properties config = new Properties();
+    config.put(CSVFileManager.FILEPATH, tmpfile.getAbsolutePath());
+    config.put(UrlBuilder.CONFIG_COLUMNS, "term");
+    config.put(CONTENT_TITLE, "term");
+    config.put(CSVFileManager.MULTIVALUE_COLUMNS, "synonyms");
+    config.put("csv.multiValue.notAColumn", "*");
+    setupConfig.initConfig(config);
+
+    thrown.expect(InvalidConfigurationException.class);
+    thrown.expectMessage(containsString("csv.multiValue.*"));
+    thrown.expectMessage(containsString("[notAColumn]"));
+    CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
   }
 
   private Properties getCSVFormatConfig(String input, String csvFormat) throws IOException {
@@ -742,8 +853,8 @@ public class CSVFileManagerTest {
     CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
     CSVRecord csvRecord = getOnlyElement(csvFileManager.getCSVFile());
 
-    assertFalse(("symbol=" + utf8euro).equals(csvRecord.get("definition")));
-    assertTrue(csvRecord.get("definition").endsWith(UTF_8.newDecoder().replacement()));
+    assertNotEquals("symbol=" + utf8euro, csvRecord.get("definition"));
+    assertThat(csvRecord.get("definition"), endsWith(UTF_8.newDecoder().replacement()));
   }
 
   // Write, read a character that exists in Cp1252, using Cp1252; it should come back as
@@ -788,7 +899,7 @@ public class CSVFileManagerTest {
     CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
     CSVRecord csvRecord = getOnlyElement(csvFileManager.getCSVFile());
 
-    assertFalse(("symbol=" + utf8devanagarishorta).equals(csvRecord.get("definition")));
+    assertNotEquals("symbol=" + utf8devanagarishorta, csvRecord.get("definition"));
   }
 
   // Write, read a character that does not exist in Cp1252 using UTF-8; another check that
@@ -826,6 +937,8 @@ public class CSVFileManagerTest {
     setupConfig.initConfig(config);
 
     thrown.expect(InvalidConfigurationException.class);
+    thrown.expectMessage(containsString(CSVFileManager.FILE_ENCODING));
+    thrown.expectMessage(containsString("NoSuchEncoding"));
     CSVFileManager csvFileManager = CSVFileManager.fromConfiguration();
   }
 
@@ -836,6 +949,7 @@ public class CSVFileManagerTest {
     config.put(CSVFileManager.FILEPATH, tmpfile.getAbsolutePath());
     config.put(UrlBuilder.CONFIG_COLUMNS, "term");
     config.put(CONTENT_TITLE, "term");
+    config.put(CSVFileManager.CSVCOLUMNS, "term");
     config.put(CSVFileManager.UNIQUE_KEY_COLUMNS, "term");
     setupConfig.initConfig(config);
 

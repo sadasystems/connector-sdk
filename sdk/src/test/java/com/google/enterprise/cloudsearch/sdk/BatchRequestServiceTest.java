@@ -16,8 +16,10 @@
 package com.google.enterprise.cloudsearch.sdk;
 
 import static com.google.common.base.Preconditions.checkNotNull;
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -27,6 +29,7 @@ import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -57,8 +60,11 @@ import com.google.enterprise.cloudsearch.sdk.BatchRequestService.SnapshotRunnabl
 import com.google.enterprise.cloudsearch.sdk.BatchRequestService.TimeProvider;
 import com.google.enterprise.cloudsearch.sdk.StatsManager.OperationStats;
 import com.google.enterprise.cloudsearch.sdk.StatsManager.ResetStatsRule;
+import com.google.enterprise.cloudsearch.sdk.config.Configuration.ResetConfigRule;
+import com.google.enterprise.cloudsearch.sdk.config.Configuration.SetupConfigRule;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
+import java.util.Properties;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -102,6 +108,8 @@ public class BatchRequestServiceTest {
 
   @Rule public ExpectedException thrown = ExpectedException.none();
   @Rule public ResetStatsRule resetStats = new ResetStatsRule();
+  @Rule public ResetConfigRule resetConfig = new ResetConfigRule();
+  @Rule public SetupConfigRule setupConfig = SetupConfigRule.uninitialized();
 
   private BatchRequestService setupService() {
     when(executorFactory.getExecutor()).thenReturn(MoreExecutors.newDirectExecutorService());
@@ -184,7 +192,8 @@ public class BatchRequestServiceTest {
 
     // verify the used requestInitializer
     HttpRequestInitializer requestInitializer = requestInitializerCaptor.getValue();
-    assertTrue(requestInitializer instanceof BatchRequestService.EventLoggingRequestInitializer);
+    assertThat(requestInitializer,
+        instanceOf(BatchRequestService.EventLoggingRequestInitializer.class));
     HttpRequest testRequest =
         new MockHttpTransport().createRequestFactory().buildDeleteRequest(null);
     requestInitializer.initialize(testRequest);
@@ -620,7 +629,7 @@ public class BatchRequestServiceTest {
     batchService.add(requestToBatch);
     batchService.flush();
     batchService.stopAsync().awaitTerminated();
-    verify(retryPolicy, times(1)).isRetryableStatusCode(httpErrorCode);
+    verify(retryPolicy).isRetryableStatusCode(httpErrorCode);
     validateFailedResult(requestToBatch.getFuture());
     assertEquals(Status.FAILED, requestToBatch.getStatus());
     assertEquals(0, requestToBatch.getRetries());
@@ -651,7 +660,7 @@ public class BatchRequestServiceTest {
     batchService.add(requestToBatch);
     batchService.flush();
     batchService.stopAsync().awaitTerminated();
-    verify(retryPolicy, times(1)).isRetryableStatusCode(0);
+    verify(retryPolicy).isRetryableStatusCode(0);
     validateFailedResult(requestToBatch.getFuture());
     assertEquals(Status.FAILED, requestToBatch.getStatus());
     assertEquals(0, requestToBatch.getRetries());
@@ -691,7 +700,7 @@ public class BatchRequestServiceTest {
     Future<Integer> result = batchService.flush();
     Thread.interrupted(); // Clear interrupted flag
     batchService.stopAsync().awaitTerminated();
-    verify(retryPolicy, times(1)).isRetryableStatusCode(0);
+    verify(retryPolicy).isRetryableStatusCode(0);
     assertEquals(Status.COMPLETED, requestToBatchSuccessful.getStatus());
     assertEquals(Status.FAILED, requestToBatchFailed.getStatus());
     assertEquals(0, requestToBatchSuccessful.getRetries());
@@ -742,7 +751,7 @@ public class BatchRequestServiceTest {
     batchService.add(requestToBatchFailed);
     Future<Integer> result = batchService.flush();
     batchService.stopAsync().awaitTerminated();
-    verify(retryPolicy, times(1)).isRetryableStatusCode(httpErrorCode);
+    verify(retryPolicy).isRetryableStatusCode(httpErrorCode);
     assertEquals(Status.COMPLETED, requestToBatchSuccessful.getStatus());
     assertEquals(Status.FAILED, requestToBatchFailed.getStatus());
     assertEquals(1, requestToBatchSuccessful.getRetries());
@@ -835,13 +844,405 @@ public class BatchRequestServiceTest {
     batchService.add(requestToBatch);
     batchService.flush();
     batchService.stopAsync().awaitTerminated();
-    verify(retryPolicy, times(1)).isRetryableStatusCode(httpErrorCode);
-    verify(retryPolicy, times(1)).getMaxRetryLimit();
-    verify(backOff, times(1)).nextBackOffMillis();
+    verify(retryPolicy).isRetryableStatusCode(httpErrorCode);
+    verify(retryPolicy).getMaxRetryLimit();
+    verify(backOff).nextBackOffMillis();
     assertEquals(successfulResult, requestToBatch.getFuture().get());
     assertEquals(Status.COMPLETED, requestToBatch.getStatus());
     assertEquals(1, requestToBatch.getRetries());
     assertFalse(batchService.isRunning());
+  }
+
+  @Test
+  public void batchPolicy_fromConfiguration_batchSize_default() throws Exception {
+    int batchCount = 2;
+    setupConfig.initConfig(new Properties());
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+    int batchSize = batchPolicy.getMaxBatchSize();
+
+    ExecutorService batchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(batchExecutor);
+    when(executorFactory.getScheduledExecutor()).thenReturn(scheduleExecutorService);
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    for (int i = 0; i < batchSize * batchCount; i++) {
+      batchService.add(asyncRequest);
+    }
+    batchService.stopAsync().awaitTerminated();
+
+    ArgumentCaptor<BatchRequestService.SnapshotRunnable> captor =
+        ArgumentCaptor.forClass(BatchRequestService.SnapshotRunnable.class);
+    verify(batchExecutor, times(batchCount)).execute(captor.capture());
+    for (BatchRequestService.SnapshotRunnable batch : captor.getAllValues()) {
+      assertEquals(batchSize, batch.snapshotRequests.size());
+    }
+  }
+
+  @Test
+  public void batchPolicy_fromConfiguration_batchSize_custom() throws Exception {
+    int batchCount = 2;
+    int batchSize = 4;
+    Properties config = new Properties();
+    config.setProperty("batch.batchSize", String.valueOf(batchSize));
+    setupConfig.initConfig(config);
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+    assertEquals(batchSize, batchPolicy.getMaxBatchSize());
+
+    ExecutorService batchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(batchExecutor);
+    when(executorFactory.getScheduledExecutor()).thenReturn(scheduleExecutorService);
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    for (int i = 0; i < batchSize * batchCount; i++) {
+      batchService.add(asyncRequest);
+    }
+    batchService.stopAsync().awaitTerminated();
+
+    ArgumentCaptor<BatchRequestService.SnapshotRunnable> captor =
+        ArgumentCaptor.forClass(BatchRequestService.SnapshotRunnable.class);
+    verify(batchExecutor, times(batchCount)).execute(captor.capture());
+    for (BatchRequestService.SnapshotRunnable batch : captor.getAllValues()) {
+      assertEquals(batchSize, batch.snapshotRequests.size());
+    }
+  }
+
+  @Test
+  public void batchPolicy_fromConfiguration_flushOnShutdown_default() throws Exception {
+    int batchCount = 2;
+    int batchSize = 4; // Greater than 1 for this test
+    Properties config = new Properties();
+    config.setProperty("batch.batchSize", String.valueOf(batchSize));
+    setupConfig.initConfig(config);
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+    assertEquals(true, batchPolicy.isFlushOnShutdown());
+
+    ExecutorService batchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(batchExecutor);
+    when(executorFactory.getScheduledExecutor()).thenReturn(scheduleExecutorService);
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    // Create an extra request that won't be sent in a batch.
+    for (int i = 0; i < (batchSize * batchCount) + 1; i++) {
+      batchService.add(asyncRequest);
+    }
+    batchService.stopAsync().awaitTerminated();
+
+    // With flushOnShutdown set to true (the default), execute should be called one more
+    // time to handle the extra request.
+    ArgumentCaptor<BatchRequestService.SnapshotRunnable> captor =
+        ArgumentCaptor.forClass(BatchRequestService.SnapshotRunnable.class);
+    verify(batchExecutor, times(batchCount + 1)).execute(captor.capture());
+  }
+
+  @Test
+  public void batchPolicy_fromConfiguration_flushOnShutdown_true() throws Exception {
+    int batchCount = 2;
+    int batchSize = 4;
+    Properties config = new Properties();
+    config.setProperty("batch.batchSize", String.valueOf(batchSize));
+    config.setProperty("batch.flushOnShutdown", "true");
+    setupConfig.initConfig(config);
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+    assertEquals(true, batchPolicy.isFlushOnShutdown());
+
+    ExecutorService batchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(batchExecutor);
+    when(executorFactory.getScheduledExecutor()).thenReturn(scheduleExecutorService);
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    // Create an extra request that won't be sent in a batch.
+    for (int i = 0; i < (batchSize * batchCount) + 1; i++) {
+      batchService.add(asyncRequest);
+    }
+    batchService.stopAsync().awaitTerminated();
+
+    // With flushOnShutdown set to true, execute should be called one more time to handle
+    // the extra request.
+    ArgumentCaptor<BatchRequestService.SnapshotRunnable> captor =
+        ArgumentCaptor.forClass(BatchRequestService.SnapshotRunnable.class);
+    verify(batchExecutor, times(batchCount + 1)).execute(captor.capture());
+  }
+
+  @Test
+  public void batchPolicy_fromConfiguration_flushOnShutdown_false() throws Exception {
+    int batchCount = 2;
+    int batchSize = 4;
+    Properties config = new Properties();
+    config.setProperty("batch.batchSize", String.valueOf(batchSize));
+    config.setProperty("batch.flushOnShutdown", "false");
+    setupConfig.initConfig(config);
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+    assertEquals(false, batchPolicy.isFlushOnShutdown());
+
+    ExecutorService batchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(batchExecutor);
+    when(executorFactory.getScheduledExecutor()).thenReturn(scheduleExecutorService);
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    // Create an extra request that won't be sent in a batch.
+    for (int i = 0; i < (batchSize * batchCount) + 1; i++) {
+      batchService.add(asyncRequest);
+    }
+    batchService.stopAsync().awaitTerminated();
+
+    // With flushOnShutdown set to false, execute should only be called for the two batches.
+    ArgumentCaptor<BatchRequestService.SnapshotRunnable> captor =
+        ArgumentCaptor.forClass(BatchRequestService.SnapshotRunnable.class);
+    verify(batchExecutor, times(batchCount)).execute(captor.capture());
+  }
+
+  // See also testScheduledAutoFlush()
+  // There are two elements we can test for maxBatchDelay: whether the value from the
+  // BatchPolicy is used in scheduling the calls to flush(), and whether the call happens
+  // if we wait that amount of time. testScheduledAutoFlush() tests the parameters to
+  // schedule() using a mock; this test checks the BatchPolicy values as set using
+  // configuration parameters and checks that a request is flushed after the configured
+  // time even though a batch size wasn't reached.
+  @Test
+  public void batchPolicy_fromConfiguration_maxBatchDelay_default() throws Exception {
+    Properties config = new Properties();
+    // Don't flush on shutdown; the test is checking for the scheduled flush.
+    config.setProperty("batch.flushOnShutdown", "false");
+    setupConfig.initConfig(config);
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+    Integer batchDelay = batchPolicy.getMaxBatchDelay();
+    // Check for a change in the default that will increase test run time.
+    if (batchDelay > 20) {
+      fail("Running this test with default batchDelay=" + batchDelay
+          + " will make the test run time too long; remove this test?");
+    }
+    // Use a real factory so we get a working object for the ScheduledExecutorService
+    ExecutorFactory executorFactory = spy(new BatchRequestService.ExecutorFactoryImpl());
+    ExecutorService batchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(batchExecutor);
+    doAnswer(
+            invocation -> {
+              ((SnapshotRunnable) invocation.getArgument(0)).run();
+              return null;
+            })
+        .when(batchExecutor)
+        .execute(isA(SnapshotRunnable.class));
+    AsyncRequest<GenericJson> requestToBatch =
+        new AsyncRequest<GenericJson>(testRequest, retryPolicy, operationStats);
+    BatchRequest batchRequest = getMockBatchRequest();
+    when(batchRequestHelper.createBatch(any())).thenReturn(batchRequest);
+    doAnswer(
+            invocation -> {
+              requestToBatch.getCallback().onStart();
+              requestToBatch.getCallback().onSuccess(new GenericJson(), new HttpHeaders());
+              return null;
+            })
+        .when(batchRequestHelper)
+        .executeBatchRequest(batchRequest);
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    batchService.add(requestToBatch);
+    // Wait out the configured delay.
+    Thread.sleep((batchDelay + 1) * 1000);
+    batchService.stopAsync().awaitTerminated();
+
+    // If the flush doesn't happen, the request will be cancelled and get() will throw an
+    // exception.
+    assertEquals(new GenericJson(), requestToBatch.getFuture().get());
+    verify(batchExecutor).execute(isA(SnapshotRunnable.class));
+  }
+
+  @Test
+  public void batchPolicy_fromConfiguration_maxBatchDelay_custom() throws Exception {
+    Integer batchDelay = 3;
+    Properties config = new Properties();
+    config.setProperty("batch.maxBatchDelaySeconds", String.valueOf(batchDelay));
+    // Don't flush on shutdown; the test is checking for the scheduled flush.
+    config.setProperty("batch.flushOnShutdown", "false");
+    setupConfig.initConfig(config);
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+    assertEquals(batchDelay.intValue(), batchPolicy.getMaxBatchDelay());
+
+    // Use a real factory so we get a working object for the ScheduledExecutorService
+    ExecutorFactory executorFactory = spy(new BatchRequestService.ExecutorFactoryImpl());
+    ExecutorService batchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(batchExecutor);
+    doAnswer(
+            invocation -> {
+              ((SnapshotRunnable) invocation.getArgument(0)).run();
+              return null;
+            })
+        .when(batchExecutor)
+        .execute(isA(SnapshotRunnable.class));
+    AsyncRequest<GenericJson> requestToBatch =
+        new AsyncRequest<GenericJson>(testRequest, retryPolicy, operationStats);
+    BatchRequest batchRequest = getMockBatchRequest();
+    when(batchRequestHelper.createBatch(any())).thenReturn(batchRequest);
+    doAnswer(
+            invocation -> {
+              requestToBatch.getCallback().onStart();
+              requestToBatch.getCallback().onSuccess(new GenericJson(), new HttpHeaders());
+              return null;
+            })
+        .when(batchRequestHelper)
+        .executeBatchRequest(batchRequest);
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    batchService.add(requestToBatch);
+    // Wait out the configured delay.
+    Thread.sleep((batchDelay + 1) * 1000);
+    batchService.stopAsync().awaitTerminated();
+
+    // If the flush doesn't happen, the request will be cancelled and get() will throw an
+    // exception.
+    assertEquals(new GenericJson(), requestToBatch.getFuture().get());
+    verify(batchExecutor).execute(isA(SnapshotRunnable.class));
+  }
+
+  @Test
+  public void batchPolicy_fromConfiguration_maxActiveBatches() throws Exception {
+    int maxActiveBatches = 5;
+    int maxQueueLength = 500;
+    Properties config = new Properties();
+    config.setProperty("batch.maxActiveBatches", String.valueOf(maxActiveBatches));
+    config.setProperty("batch.maxQueueLength", String.valueOf(maxQueueLength));
+    setupConfig.initConfig(config);
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+
+    AsyncRequest<GenericJson> requestToBatch =
+        new AsyncRequest<GenericJson>(testRequest, retryPolicy, operationStats);
+    doAnswer(
+            invocation -> {
+              requestToBatch.getCallback().onStart();
+              requestToBatch.getCallback().onSuccess(new GenericJson(), new HttpHeaders());
+              return null;
+            })
+        .when(batchRequestHelper)
+        .executeBatchRequest(any());
+    ExecutorService mockBatchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(mockBatchExecutor);
+    when(executorFactory.getScheduledExecutor()).thenReturn(scheduleExecutorService);
+    doAnswer(
+        invocation -> {
+          // Actually run the batch; this is how the active batches semaphore is released.
+          ((SnapshotRunnable) invocation.getArgument(0)).run();
+          return null;
+        })
+        .when(mockBatchExecutor)
+        .execute(isA(SnapshotRunnable.class));
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    // Send more requests than can be active (in batches) at once, but less than
+    // maxQueueLength (we're not testing that here).
+    int numRequests = (maxActiveBatches + 1) * batchPolicy.getMaxBatchSize();
+    assertTrue(numRequests < maxQueueLength);
+    for (int i = 0; i < numRequests; i++) {
+      batchService.add(requestToBatch);
+    }
+    batchService.stopAsync().awaitTerminated();
+
+    ArgumentCaptor<BatchRequestService.SnapshotRunnable> captor =
+        ArgumentCaptor.forClass(BatchRequestService.SnapshotRunnable.class);
+    verify(mockBatchExecutor, Mockito.atLeastOnce()).execute(captor.capture());
+    int requestCount = 0;
+    for (BatchRequestService.SnapshotRunnable batch : captor.getAllValues()) {
+      requestCount += batch.snapshotRequests.size();
+    }
+    assertEquals(numRequests, requestCount);
+  }
+
+  @Test
+  public void batchPolicy_fromConfiguration_maxQueueSize() throws Exception {
+    // If maxQueueLength is less than maxBatchSize, a scheduled executor is required, or
+    // flush will never be called and the test will hang.
+    int maxQueueLength = 15;
+    int batchSize = 10;
+    Properties config = new Properties();
+    config.setProperty("batch.maxQueueLength", String.valueOf(maxQueueLength));
+    config.setProperty("batch.batchSize", String.valueOf(batchSize));
+    setupConfig.initConfig(config);
+    BatchPolicy batchPolicy = BatchPolicy.fromConfiguration();
+
+    ExecutorService batchExecutor = Mockito.mock(ExecutorService.class);
+    when(executorFactory.getExecutor()).thenReturn(batchExecutor);
+    when(executorFactory.getScheduledExecutor()).thenReturn(scheduleExecutorService);
+
+    BatchRequestService batchService =
+        new BatchRequestService.Builder(service)
+            .setExecutorFactory(executorFactory)
+            .setBatchRequestHelper(batchRequestHelper)
+            .setGoogleCredential(credential)
+            .setBatchPolicy(batchPolicy)
+            .build();
+    batchService.startAsync().awaitRunning();
+    // Send more requests than can fit in the request queue. Don't let the number of
+    // batches exceed maxActiveBatches or the batches will hang (see
+    // batchPolicy_fromConfiguration_maxActiveBatches).
+    int numRequests = maxQueueLength * 3;
+    for (int i = 0; i < numRequests; i++) {
+      batchService.add(asyncRequest);
+    }
+    batchService.stopAsync().awaitTerminated();
+
+    ArgumentCaptor<BatchRequestService.SnapshotRunnable> captor =
+        ArgumentCaptor.forClass(BatchRequestService.SnapshotRunnable.class);
+    verify(batchExecutor, Mockito.atLeastOnce()).execute(captor.capture());
+    int requestCount = 0;
+    for (BatchRequestService.SnapshotRunnable batch : captor.getAllValues()) {
+      requestCount += batch.snapshotRequests.size();
+    }
+    assertEquals(numRequests, requestCount);
   }
 
   private <T> void validateFailedResult(ListenableFuture<T> failed) throws InterruptedException {
@@ -849,7 +1250,7 @@ public class BatchRequestServiceTest {
       failed.get();
       fail("missing ExecutionException");
     } catch (ExecutionException ignore) {
-      assertTrue(ignore.getCause() instanceof IOException);
+      assertThat(ignore.getCause(), instanceOf(IOException.class));
     }
   }
 
