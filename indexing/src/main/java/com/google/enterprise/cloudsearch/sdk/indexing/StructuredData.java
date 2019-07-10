@@ -39,6 +39,7 @@ import com.google.api.services.cloudsearch.v1.model.Schema;
 import com.google.api.services.cloudsearch.v1.model.StructuredDataObject;
 import com.google.api.services.cloudsearch.v1.model.TextValues;
 import com.google.api.services.cloudsearch.v1.model.TimestampValues;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Converter;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
@@ -273,6 +274,15 @@ public class StructuredData {
   }
 
   /**
+   * Same as setting structuredData.ignoreConversionErrors in configuration
+   * @param ignore
+   */
+  @VisibleForTesting
+  public static void setIgnoreConversionErrors(boolean ignore) {
+    ignoreConversionErrors.set(ignore);
+  }
+
+  /**
    * Generate a {@link StructuredDataObject} for the given object type using the input values.
    *
    * <p>The object type must be present in the current schema. The structured data properties are
@@ -365,7 +375,7 @@ public class StructuredData {
       if (!isRepeated) {
         try {
           return propertyBuilder.getNamedProperty(
-                  propertyName, Collections.singletonList(valueConverter.convert(nonNullValues.get(0))));
+              propertyName, Collections.singletonList(valueConverter.convert(nonNullValues.get(0))));
         } catch (IllegalArgumentException e) {
           if (ignoreConversionErrors.get()) {
             logger.log(Level.FINEST, "Ignoring conversion error: {0}", e.getMessage());
@@ -375,16 +385,16 @@ public class StructuredData {
         }
       } else {
         List<T> nonNullConvertedValues = nonNullValues
-                .stream()
-                .map(v -> convert(valueConverter, v))
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-        if(nonNullConvertedValues.isEmpty()) {
+            .stream()
+            .map(v -> convert(valueConverter, v))
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+        if (nonNullConvertedValues.isEmpty()) {
           return null;
         }
         return propertyBuilder.getNamedProperty(
-                propertyName,
-                nonNullConvertedValues);
+            propertyName,
+            nonNullConvertedValues);
       }
     }
 
@@ -392,7 +402,7 @@ public class StructuredData {
       try {
         return converter.convert(v);
       } catch (IllegalArgumentException e) {
-        if(ignoreConversionErrors.get()) {
+        if (ignoreConversionErrors.get()) {
           logger.log(Level.FINEST, "Ignoring conversion error: {0}", e.getMessage());
           return null;
         }
